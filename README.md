@@ -139,7 +139,7 @@ opencode-github-sync/
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date)](https://star-history.com/#doomsday616/opencode-github-sync&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date&v=2)](https://star-history.com/#doomsday616/opencode-github-sync&Date)
 
 ## License
 
