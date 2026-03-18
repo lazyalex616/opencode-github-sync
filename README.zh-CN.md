@@ -41,7 +41,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.svg" alt="演示效果" width="600"/>
+  <img src="docs/demo.zh-CN.svg" alt="演示效果" width="600"/>
 </p>
 
 ## 功能特点
