@@ -137,6 +137,10 @@ opencode-github-sync/
 └── LICENSE
 ```
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date)](https://star-history.com/#doomsday616/opencode-github-sync&Date)
+
 ## 许可证
 
 [MIT](./LICENSE)
