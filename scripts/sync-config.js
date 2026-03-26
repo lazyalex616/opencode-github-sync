@@ -424,6 +424,7 @@ function doPush(root, force, stageInFn, msgPrefix) {
 
   // ── Step 3: Stage files into repo
   stageInFn(root);
+  success("正在从 4 个目录暂存文件...");
 
   // ── Step 4: Stage everything
   git("add -A", { cwd: root });
@@ -440,6 +441,7 @@ function doPush(root, force, stageInFn, msgPrefix) {
   const modified = lines.filter(l => l.startsWith("M ")).length;
   const deleted = lines.filter(l => l.startsWith("D ")).length;
   const renamed = lines.filter(l => l.startsWith("R ")).length;
+  const totalChanges = added + modified + deleted + renamed;
 
   // ── Step 6: Commit
   const msg = commitMessage(msgPrefix);
@@ -450,6 +452,7 @@ function doPush(root, force, stageInFn, msgPrefix) {
     for (const line of lines) console.error(`  ${line}`);
     process.exit(1);
   }
+  success(`已提交：${totalChanges} 个文件变更`);
 
   // ── Step 7: Rebase + push
   const remoteRef = git(`rev-parse origin/${BRANCH}`, { cwd: root });
@@ -472,7 +475,7 @@ function doPush(root, force, stageInFn, msgPrefix) {
   if (pullResult.ok) {
     const pushResult = git(`push origin ${BRANCH}`, { cwd: root });
     if (pushResult.ok) {
-      success(`Push 成功：${formatStats(added, modified, deleted, renamed)}`);
+      success(`已 Push 到 GitHub repo（rebase，无冲突）`);
     } else {
       error("Push 失败");
       console.error(pushResult.err);
@@ -488,7 +491,7 @@ function doPush(root, force, stageInFn, msgPrefix) {
   if (force) {
     const fpResult = git(`push --force-with-lease origin ${BRANCH}`, { cwd: root });
     if (fpResult.ok) {
-      success(`强制 Push 成功：${formatStats(added, modified, deleted, renamed)}`);
+      success(`已强制 Push 到 GitHub repo（force-with-lease）`);
     } else {
       error("强制 Push 失败");
       console.error(fpResult.err);
@@ -548,6 +551,7 @@ function doPull(root, force, stageOutFn, label) {
   }
 
   // ── Step 3: Fetch and check diff before reset
+  success("正在从 GitHub Fetch 最新数据...");
   const fetchResult = git(`fetch origin ${BRANCH}`, { cwd: root });
   if (!fetchResult.ok) {
     error("Fetch 失败：" + fetchResult.err);
@@ -582,7 +586,7 @@ function doPull(root, force, stageOutFn, label) {
 
     stageOutFn(root);
     const stats = formatDiffStats(nameStatus.ok ? nameStatus.out : "");
-    success(`Pull 成功：${stats}`);
+    success(`已从 GitHub Pull 到本地：${stats}`);
   } else {
     // ── Step 4: Restore stashed local changes (even when up to date)
     if (didStash) {
@@ -601,7 +605,7 @@ function doPull(root, force, stageOutFn, label) {
   }
 
   if (label === "config") {
-    note("需要重启 OpenCode 生效 (Restart session to apply)");
+    note("需要重启 OpenCode 生效");
   }
 }
 

@@ -55,19 +55,22 @@ function title(msg) {
 
 function logo(action = "push", force = false) {
   const BOX_W = 50;
-  const border = c.tn.gray;
+  const border = c.tn.cyan;
+  const brandText = "OpenCode Sync";
+  const brandStyled = c.bold + c.white + brandText + c.reset;
+  const sep = c.tn.gray + " — " + c.reset;
   const icon = c.tn.purple + "⚡" + c.reset;
-  const titleText = action === "push" ? "Push to GitHub" : "Pull from GitHub";
-  const titleStyled = c.tn.cyan + c.bold + titleText + c.reset;
-  const forceTag = force ? "  " + c.tn.red + "⚠ FORCE" + c.reset : "";
+  const actionText = action === "push" ? "Push to GitHub" : "Pull from GitHub";
+  const actionStyled = c.tn.cyan + actionText + c.reset;
+  const forceTag = force ? "  " + c.tn.red + c.bold + "⚠ FORCE" + c.reset : "";
 
   // Calculate padding (visible chars only)
-  const visLen = 2 + titleText.length + (force ? "  ⚠ FORCE".length : 0);
+  const visLen = 2 + brandText.length + " — ".length + 2 + actionText.length + (force ? "  ⚠ FORCE".length : 0);
   const pad = BOX_W - 4 - visLen; // 4 = "│  " + "│"
 
   console.log();
   console.log(`  ${border}┌${"─".repeat(BOX_W - 2)}┐${c.reset}`);
-  console.log(`  ${border}│${c.reset}  ${icon} ${titleStyled}${forceTag}${" ".repeat(Math.max(pad, 0))}${border}│${c.reset}`);
+  console.log(`  ${border}│${c.reset}  ${brandStyled}${sep}${icon} ${actionStyled}${forceTag}${" ".repeat(Math.max(pad, 0))}${border}│${c.reset}`);
   console.log(`  ${border}└${"─".repeat(BOX_W - 2)}┘${c.reset}`);
   console.log();
 }
@@ -103,6 +106,21 @@ function section(label, value = "") {
 function done(msg) {
   console.log();
   printLine("✔", paint(msg, c.bold, c.tn.green), c.tn.green);
+}
+
+function separator() {
+  console.log();
+  console.log(`  ${c.tn.cyan}${c.bold}${"━".repeat(48)}${c.reset}`);
+}
+
+function completionBanner(action, target) {
+  separator();
+  console.log(`  ${c.tn.green}${c.bold}✨ 同步完成！${c.reset}`);
+  const actionLabel = action === "push" ? "Push" : "Pull";
+  const targetLabel = target === "config" ? "配置文件" : target === "sessions" ? "会话数据" : "配置文件和会话数据";
+  const dest = action === "push" ? "到 GitHub" : "自 GitHub";
+  console.log(`  ${c.tn.text}OpenCode ${targetLabel}已成功 ${actionLabel} ${dest}${c.reset}`);
+  console.log();
 }
 
 // ── Stats formatting ────────────────────────────────
@@ -152,6 +170,8 @@ module.exports = {
   note,
   section,
   done,
+  separator,
+  completionBanner,
   formatStats,
   formatDiffStats,
 };

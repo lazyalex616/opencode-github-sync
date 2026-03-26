@@ -22,7 +22,7 @@ const fs = require("node:fs");
 
 // ── UI imports ───────────────────────────────────────────────────────
 
-const { c, logo, title, info, warn, error, success, done, step, note, section } = require("./ui");
+const { c, logo, title, info, warn, error, success, done, step, note, section, completionBanner } = require("./ui");
 
 // ── Paths ────────────────────────────────────────────────────────────
 
@@ -78,22 +78,22 @@ async function chooseTarget(action, force) {
   const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
   const target = await select({
-    message: `${c.tn.cyan}?${R} 选择同步范围：`,
+    message: `${c.tn.cyan}?${R} 你想同步什么？`,
     choices: [
       {
-        name: `🛠️ 仅配置`,
+        name: `● 仅配置`,
         value: "config"
       },
       {
-        name: `📝 仅会话`,
+        name: `○ 仅会话`,
         value: "sessions"
       },
       {
-        name: `🌐 全部`,
+        name: `○ 全部`,
         value: "both"
       },
       {
-        name: `🔚 退出`,
+        name: `○ 退出`,
         value: "quit"
       },
     ],
@@ -103,7 +103,9 @@ async function chooseTarget(action, force) {
       style: {
         highlight: (text) => {
           const plain = stripAnsi(text);
-          return `${HI}❯ ${plain}${R}`;
+          // Replace leading ○ with ● for selected item
+          const selected = plain.replace(/^○/, "●");
+          return `${HI}❯ ${selected}${R}`;
         },
       },
       helpMode: "never",
@@ -111,11 +113,13 @@ async function chooseTarget(action, force) {
   });
 
   if (target === "quit") {
-    console.log(`${c.tn.gray}已取消${c.reset}`);
+    console.log(`  ${c.tn.gray}已取消${c.reset}`);
     process.exit(0);
   }
 
-  success(`已选择：${target === "both" ? "全部" : target === "config" ? "仅配置" : "仅会话"}`);
+  // Show selected choice (menu stays visible above in terminal)
+  const targetLabel = target === "both" ? "全部" : target === "config" ? "仅配置" : "仅会话";
+  success(`已选择：${targetLabel}`);
   console.log();
   return target;
 }
@@ -127,7 +131,7 @@ function extractImportantLines(output) {
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
     .filter(Boolean)
-    .filter((line) => /[✔✖⚠ℹ📭📦💾]/.test(line) || /最新|成功|失败|冲突|重启|Force|error|WARN|ERROR|数据库|迁移|改动|干净/i.test(line));
+    .filter((line) => /[✔✖⚠ℹ📭📦💾🔧]/.test(line) || /最新|成功|失败|冲突|重启|Force|error|WARN|ERROR|数据库|迁移|改动|干净|暂存|提交|Push|Pull|Fetch/i.test(line));
 }
 
 function runScript(scriptPath, args, label) {
@@ -213,8 +217,7 @@ async function dispatch(action, target, force) {
   }
 
   // Final summary
-  const actionPast = action === "push" ? "Push 完成" : "Pull 完成";
-  done(`${actionPast}`);
+  completionBanner(action, target);
 }
 
 // ── Status ───────────────────────────────────────────────────────────

@@ -571,6 +571,7 @@ function doPush(root, force) {
   ensureFile(path.join(root, ".gitattributes"), DEFAULT_GITATTRIBUTES);
 
   stageSessionDataIn(root);
+  success("正在从数据目录暂存文件...");
 
   git("add -A", { cwd: root });
 
@@ -587,6 +588,7 @@ function doPush(root, force) {
   const modified = lines.filter((l) => l.startsWith("M ")).length;
   const deleted = lines.filter((l) => l.startsWith("D ")).length;
   const renamed = lines.filter((l) => l.startsWith("R ")).length;
+  const totalChanges = added + modified + deleted + renamed;
 
   const msg = commitMessage();
   const commitResult = git(`commit -m "${msg}"`, { cwd: root });
@@ -596,6 +598,7 @@ function doPush(root, force) {
     for (const line of lines) console.error(`  ${line}`);
     process.exit(1);
   }
+  success(`已提交：${totalChanges} 个文件变更`);
 
   // Rebase + push
   const remoteRef = git(`rev-parse origin/${BRANCH}`, { cwd: root });
@@ -603,9 +606,7 @@ function doPush(root, force) {
     // First push
     const pushResult = git(`push -u origin ${BRANCH}`, { cwd: root });
     if (pushResult.ok) {
-      success(
-        `首次 Push 成功：${formatStats(added, modified, deleted, renamed)}`,
-      );
+      success(`首次 Push 成功：${formatStats(added, modified, deleted, renamed)}`);
     } else {
       error("Push 失败");
       console.error(pushResult.err);
@@ -620,9 +621,7 @@ function doPush(root, force) {
   if (pullResult.ok) {
     const pushResult = git(`push origin ${BRANCH}`, { cwd: root });
     if (pushResult.ok) {
-      success(
-        `Push 成功：${formatStats(added, modified, deleted, renamed)}`,
-      );
+      success(`已 Push 到 GitHub repo（rebase，无冲突）`);
     } else {
       error("Push 失败");
       console.error(pushResult.err);
@@ -640,9 +639,7 @@ function doPush(root, force) {
       cwd: root,
     });
     if (fpResult.ok) {
-      success(
-        `强制 Push 成功：${formatStats(added, modified, deleted, renamed)}`,
-      );
+      success(`已强制 Push 到 GitHub repo（force-with-lease）`);
     } else {
       error("强制 Push 失败");
       console.error(fpResult.err);
@@ -701,6 +698,7 @@ function doPull(root, force) {
   }
 
   // Fetch and check diff before reset
+  success("正在从 GitHub Fetch 最新数据...");
   const fetchResult = git(`fetch origin ${BRANCH}`, { cwd: root });
   if (!fetchResult.ok) {
     error(`Fetch 失败：${fetchResult.err}`);
@@ -725,7 +723,7 @@ function doPull(root, force) {
     if (didStash) {
       const popResult = git("stash pop", { cwd: root });
       if (!popResult.ok) {
-        console.error("❌ Stash 恢复冲突，中止操作");
+        error("Stash 恢复冲突");
         console.error("   手动处理：");
         console.error(`     cd "${root}"`);
         console.error("     git stash show          # 查看暂存内容");
@@ -738,13 +736,13 @@ function doPull(root, force) {
 
     stageSessionDataOut(root);
     const stats = formatDiffStats(nameStatus.ok ? nameStatus.out : "");
-    success(`Pull 成功：${stats}`);
+    success(`已从 GitHub Pull 到本地：${stats}`);
   } else {
     // Restore stashed local changes (even when up to date)
     if (didStash) {
       const popResult = git("stash pop", { cwd: root });
       if (!popResult.ok) {
-        console.error("❌ Stash 恢复冲突，中止操作");
+        error("Stash 恢复冲突");
         console.error("   手动处理：");
         console.error(`     cd "${root}"`);
         console.error("     git stash show          # 查看暂存内容");
