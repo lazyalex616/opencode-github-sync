@@ -110,14 +110,14 @@ function completionBanner(action, target) {
   separator();
   const actionLabel = action === "push" ? "Push" : "Pull";
   const targetLabel = target === "config" ? "配置文件" : target === "sessions" ? "会话数据" : "配置和会话";
-  console.log(`  \x1b[38;2;43;129;46m${c.bold}✨ 同步完成！${c.reset}  ${c.tn.slate}${targetLabel}已成功 ${actionLabel}${c.reset}`);
+  console.log(`  \x1b[38;2;0;210;106m${c.bold}✨ 同步完成！${c.reset}  ${c.tn.slate}${targetLabel}已成功 ${actionLabel}${c.reset}`);
   console.log();
 }
 
 function upToDateBanner(action, target) {
   separator();
   const targetLabel = target === "config" ? "配置文件" : target === "sessions" ? "会话数据" : "配置和会话";
-  console.log(`  \x1b[38;2;43;129;46m${c.bold}✨ 同步完成！${c.reset}  ${c.tn.slate}${targetLabel}已是最新${c.reset}`);
+  console.log(`  \x1b[38;2;0;210;106m${c.bold}✨ 同步完成！${c.reset}  ${c.tn.slate}${targetLabel}已是最新${c.reset}`);
   console.log();
 }
 
