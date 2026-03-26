@@ -140,9 +140,12 @@ opencode-pull-force    # 强制拉取（丢弃本地变更）
 ```
 opencode-github-sync/
 ├── scripts/
-│   ├── opencode-sync-core.js    # 入口 — 交互式选择器
-│   ├── sync-config.js           # 配置 + 状态同步逻辑 (~710 行)
-│   └── sync-sessions.js         # 会话 + 数据库同步逻辑 (~890 行)
+│   ├── opencode-launcher.js     # 启动器 — 自更新 + 依赖安装 + 委托
+│   ├── opencode-sync-core.js    # 交互式选择器（使用 @inquirer/select）
+│   ├── sync-config.js           # 配置 + 状态同步逻辑
+│   ├── sync-sessions.js         # 会话 + 数据库同步逻辑
+│   ├── ui.js                    # 共享 UI 工具（颜色、样式化输出）
+│   └── package.json             # 依赖（@inquirer/select）
 ├── wrappers/
 │   ├── mac/                     # Shell wrapper (chmod +x)
 │   └── windows/                 # .cmd wrapper

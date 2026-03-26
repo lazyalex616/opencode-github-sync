@@ -141,9 +141,12 @@ opencode-pull-force    # Force pull (discard local)
 ```
 opencode-github-sync/
 ├── scripts/
-│   ├── opencode-sync-core.js    # Entry point — interactive chooser
-│   ├── sync-config.js           # Config + state sync logic (~710 lines)
-│   └── sync-sessions.js         # Session + db sync logic (~890 lines)
+│   ├── opencode-launcher.js     # Bootstrap — self-update + dep install + delegate
+│   ├── opencode-sync-core.js    # Interactive chooser (uses @inquirer/select)
+│   ├── sync-config.js           # Config + state sync logic
+│   ├── sync-sessions.js         # Session + db sync logic
+│   ├── ui.js                    # Shared UI utilities (colors, styled output)
+│   └── package.json             # Dependencies (@inquirer/select)
 ├── wrappers/
 │   ├── mac/                     # Shell wrappers (chmod +x)
 │   └── windows/                 # .cmd wrappers

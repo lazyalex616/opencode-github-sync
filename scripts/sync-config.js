@@ -34,6 +34,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { execSync } = require("node:child_process");
+const { c, success, error, warn, step, formatStats, formatDiffStats } = require("./ui");
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -41,8 +42,8 @@ const BRANCH = "main";
 
 const DEFAULT_GITIGNORE = `# Runtime / generated
 node_modules/
-package.json
-package-lock.json
+/package.json
+/package-lock.json
 bun.lock
 
 # OS files
@@ -110,7 +111,7 @@ function getAgentsRoot() {
 function getRemoteUrl() {
   const url = process.env.SYNC_REMOTE_URL;
   if (!url) {
-    console.error("❌ SYNC_REMOTE_URL environment variable is not set.");
+    error("SYNC_REMOTE_URL environment variable is not set.");
     console.error("   Set it to your GitHub repo URL, e.g.:");
     console.error("   export SYNC_REMOTE_URL=\"https://github.com/user/repo.git\"");
     process.exit(1);
@@ -411,31 +412,6 @@ function ensureRepo(root) {
   return "ready";
 }
 
-// ── Output formatting ───────────────────────────────────────────────
-
-function formatStats(added, modified, deleted, renamed) {
-  const parts = [];
-  if (added)    parts.push(`📄added+${added}`);
-  if (modified) parts.push(`📝modified~${modified}`);
-  if (deleted)  parts.push(`🗑️deleted-${deleted}`);
-  if (renamed)  parts.push(`🔄renamed>${renamed}`);
-  return parts.join(" ") || "No changes";
-}
-
-function formatDiffStats(diffOutput) {
-  if (!diffOutput) return formatStats(0, 0, 0, 0);
-  const lines = diffOutput.split("\n").filter(Boolean);
-  let added = 0, modified = 0, deleted = 0, renamed = 0;
-  for (const line of lines) {
-    const status = line.charAt(0);
-    if (status === "A") added++;
-    else if (status === "M") modified++;
-    else if (status === "D") deleted++;
-    else if (status === "R") renamed++;
-  }
-  return formatStats(added, modified, deleted, renamed);
-}
-
 // ── Shared push/pull logic ──────────────────────────────────────────
 
 function doPush(root, force, stageInFn, msgPrefix) {
@@ -455,7 +431,7 @@ function doPush(root, force, stageInFn, msgPrefix) {
   // ── Step 5: Check for changes
   const status = git("status --short", { cwd: root });
   if (!status.ok || !status.out) {
-    console.log("✅ No changes to push, already up to date");
+    success("已是最新");
     return;
   }
 
@@ -469,7 +445,7 @@ function doPush(root, force, stageInFn, msgPrefix) {
   const msg = commitMessage(msgPrefix);
   const commitResult = git(`commit -m "${msg}"`, { cwd: root });
   if (!commitResult.ok) {
-    console.error(`❌ Commit failed`);
+    error("Commit 失败");
     console.error(commitResult.err || commitResult.out);
     for (const line of lines) console.error(`  ${line}`);
     process.exit(1);
@@ -481,9 +457,9 @@ function doPush(root, force, stageInFn, msgPrefix) {
     // First push
     const pushResult = git(`push -u origin ${BRANCH}`, { cwd: root });
     if (pushResult.ok) {
-      console.log(`✅ Pushed (first time): ${formatStats(added, modified, deleted, renamed)}`);
+      success(`首次 Push 成功：${formatStats(added, modified, deleted, renamed)}`);
     } else {
-      console.error(`❌ Push failed`);
+      error("Push 失败");
       console.error(pushResult.err);
       for (const line of lines) console.error(`  ${line}`);
       process.exit(1);
@@ -496,9 +472,9 @@ function doPush(root, force, stageInFn, msgPrefix) {
   if (pullResult.ok) {
     const pushResult = git(`push origin ${BRANCH}`, { cwd: root });
     if (pushResult.ok) {
-      console.log(`✅ Pushed: ${formatStats(added, modified, deleted, renamed)}`);
+      success(`Push 成功：${formatStats(added, modified, deleted, renamed)}`);
     } else {
-      console.error(`❌ Push failed`);
+      error("Push 失败");
       console.error(pushResult.err);
       for (const line of lines) console.error(`  ${line}`);
       process.exit(1);
@@ -512,15 +488,15 @@ function doPush(root, force, stageInFn, msgPrefix) {
   if (force) {
     const fpResult = git(`push --force-with-lease origin ${BRANCH}`, { cwd: root });
     if (fpResult.ok) {
-      console.log(`✅ Force pushed: ${formatStats(added, modified, deleted, renamed)}`);
+      success(`强制 Push 成功：${formatStats(added, modified, deleted, renamed)}`);
     } else {
-      console.error(`❌ Force push failed`);
+      error("强制 Push 失败");
       console.error(fpResult.err);
       for (const line of lines) console.error(`  ${line}`);
       process.exit(1);
     }
   } else {
-    console.error("❌ Rebase conflict. Use --force to force push, or pull --force first.");
+    error("Rebase 冲突，请使用 --force 强制 Push");
     for (const line of lines) console.error(`  ${line}`);
     process.exit(1);
   }
@@ -531,13 +507,13 @@ function doPull(root, force, stageOutFn, label) {
   if (!isGitRepo(root)) {
     const mode = initRepo(root);
     if (mode === "fresh") {
-      console.log("📭 Remote is empty, nothing to pull. Push from another device first.");
+      console.log(`${c.gray}📭 GitHub repo 为空，请先在其他设备上 Push${c.reset}`);
       return;
     }
     // mode === "fetched" — we already have the content
     const files = git("ls-files", { cwd: root });
     const count = files.ok ? files.out.split("\n").filter(Boolean).length : 0;
-    console.log(`✅ Pulled (first time): 📄added+${count}`);
+    success(`首次 Pull 成功：📄+${count}`);
     stageOutFn(root);
     return;
   }
@@ -564,8 +540,8 @@ function doPull(root, force, stageOutFn, label) {
       if (stashResult.ok) {
         didStash = true;
       } else {
-        console.error("❌ Stash failed: ", stashResult.err || stashResult.out);
-        console.error("   Use --force to discard local changes and overwrite.");
+        error("Stash 失败：" + (stashResult.err || stashResult.out));
+        warn("请使用 --force 强制覆盖本地更改");
         process.exit(1);
       }
     }
@@ -574,7 +550,7 @@ function doPull(root, force, stageOutFn, label) {
   // ── Step 3: Fetch and check diff before reset
   const fetchResult = git(`fetch origin ${BRANCH}`, { cwd: root });
   if (!fetchResult.ok) {
-    console.error("❌ Fetch failed: ", fetchResult.err);
+    error("Fetch 失败：" + fetchResult.err);
     process.exit(1);
   }
 
@@ -588,7 +564,7 @@ function doPull(root, force, stageOutFn, label) {
     const nameStatus = git(`diff --name-status HEAD origin/${BRANCH}`, { cwd: root });
     const resetResult = git(`reset --hard origin/${BRANCH}`, { cwd: root });
     if (!resetResult.ok) {
-      console.error("❌ Reset failed: ", resetResult.err);
+      error("Reset 失败：" + resetResult.err);
       process.exit(1);
     }
 
@@ -596,37 +572,36 @@ function doPull(root, force, stageOutFn, label) {
     if (didStash) {
       const popResult = git("stash pop", { cwd: root });
       if (!popResult.ok) {
-        console.error("❌ Stash pop conflict, aborting to prevent state corruption.");
+        error("Stash 恢复冲突");
         console.error(`   cd "${root}"`);
         console.error("   git stash show → git checkout -- . → git stash drop");
-        console.error("   or: opencode-pull-force");
+        console.error("   或使用: opencode-pull-force");
         process.exit(1);
       }
     }
 
     stageOutFn(root);
     const stats = formatDiffStats(nameStatus.ok ? nameStatus.out : "");
-    console.log(`✅ Pulled: ${stats}`);
+    success(`Pull 成功：${stats}`);
   } else {
     // ── Step 4: Restore stashed local changes (even when up to date)
     if (didStash) {
       const popResult = git("stash pop", { cwd: root });
       if (!popResult.ok) {
-        console.error("❌ Stash pop conflict, aborting to prevent state corruption.");
+        error("Stash 恢复冲突");
         console.error(`   cd "${root}"`);
         console.error("   git stash show → git checkout -- . → git stash drop");
-        console.error("   or: opencode-pull-force");
+        console.error("   或使用: opencode-pull-force");
         process.exit(1);
       }
     }
 
-    // Always restore files from repo to real locations
     stageOutFn(root);
-    console.log("✅ Already up to date");
+    success("已是最新");
   }
 
   if (label === "config") {
-    console.log("   Restart your session for changes to take effect.");
+    note("需要重启 OpenCode 生效 (Restart session to apply)");
   }
 }
 
@@ -638,7 +613,7 @@ function capitalize(s) {
 
 function cmdStatus(root) {
   if (!isGitRepo(root)) {
-    console.log("📭 Not initialized. Run push or pull first.");
+    console.log(`${c.gray}📭 尚未初始化，请先执行 push 或 pull。${c.reset}`);
     return;
   }
 
@@ -646,13 +621,13 @@ function cmdStatus(root) {
   const lastCommit = git("log --oneline -1", { cwd: root });
   const status = git("status --short", { cwd: root });
 
-  console.log(`📦 Last sync: ${lastCommit.ok ? lastCommit.out : "No commits"}`);
+  console.log(`${c.cyan}📦 上次同步${c.reset}  ${lastCommit.ok ? lastCommit.out : "暂无提交记录"}`);
 
   if (status.ok && status.out) {
     const lines = status.out.split("\n");
-    console.log(`📝 ${lines.length} local changes`);
+    console.log(`${c.yellow}📝 检测到 ${lines.length} 项本地改动${c.reset}`);
   } else {
-    console.log("✅ Clean — no local changes");
+    console.log(`${c.green}✅ 当前干净，没有本地改动${c.reset}`);
   }
 }
 
@@ -675,7 +650,7 @@ if (!fs.existsSync(root)) {
   if (command === "pull") {
     fs.mkdirSync(root, { recursive: true });
   } else {
-    console.error(`Config directory not found: ${root}`);
+    console.error(`配置目录不存在：${root}`);
     process.exit(1);
   }
 }
@@ -691,18 +666,18 @@ switch (command) {
     cmdStatus(root);
     break;
   default:
-    console.log("Usage: node sync-config.js <command> [--force]");
+    console.log("用法：node sync-config.js <command> [--force]");
     console.log("");
-    console.log("Commands:");
-    console.log("  push     Push config to GitHub");
-    console.log("  pull     Pull config from GitHub");
-    console.log("  status   Show sync status and local changes");
+    console.log("命令：");
+    console.log("  push     Push 配置到 GitHub");
+    console.log("  pull     从 GitHub Pull 配置");
+    console.log("  status   查看同步状态和本地改动");
     console.log("");
-    console.log("Options:");
-    console.log("  --force   push: Force push on rebase conflict");
-    console.log("            pull: Discard local changes (default: auto-stash)");
+    console.log("选项：");
+    console.log("  --force   push: rebase 冲突时强制 Push");
+    console.log("            pull: 丢弃本地改动（默认自动 stash）");
     console.log("");
-    console.log("Sync directories:");
+    console.log("同步目录：");
     console.log(`  config: ${getConfigRoot()}`);
     console.log(`  data:   ${getDataRoot()}`);
     console.log(`  state:  ${getStateRoot()}`);
