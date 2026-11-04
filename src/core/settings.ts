@@ -85,6 +85,12 @@ export interface Settings {
   machineAlias?: string;
   /** Sync `auth.json` / `account.json`. Requires a private repository. */
   includeCredentials: boolean;
+  /**
+   * With credential sync on, let only one machine at a time renew the shared
+   * ChatGPT (OpenAI OAuth) login, from the scheduled job. Without it machines
+   * that refresh the same login log each other out.
+   */
+  openaiRefreshLease: boolean;
   /** Sync `~/.agents/skills`. */
   includeSkills: boolean;
   /** Sync `~/.local/state/opencode`. */
@@ -113,6 +119,7 @@ export const DEFAULT_SKIP_DIRS = ["node_modules", ".venv", "venv", "__pycache__"
 export const DEFAULT_SETTINGS: Settings = {
   repo: { branch: "main" },
   includeCredentials: false,
+  openaiRefreshLease: true,
   includeSkills: true,
   includeState: true,
   extraPaths: [],
