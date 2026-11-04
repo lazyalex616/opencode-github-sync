@@ -98,10 +98,22 @@ export async function sqliteAvailable(): Promise<boolean> {
   return (await detectDriver()) !== "none";
 }
 
+/**
+ * OpenCode 2 keeps a background service attached to the database, so a write
+ * can briefly find it locked. Waiting is always better than failing a sync.
+ */
+const BUSY_TIMEOUT_MS = 10_000;
+
 export async function openDatabase(
   file: string,
   options: OpenOptions = {},
 ): Promise<SqliteDatabase> {
+  const db = await openRaw(file, options);
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  return db;
+}
+
+async function openRaw(file: string, options: OpenOptions): Promise<SqliteDatabase> {
   const driver = await detectDriver();
 
   if (driver === "bun") {
@@ -137,6 +149,11 @@ export async function openDatabase(
   }
 
   throw new SqliteUnavailableError();
+}
+
+/** True when the database has the given table. */
+export function hasTable(db: SqliteDatabase, name: string): boolean {
+  return existingTables(db, [name]).length > 0;
 }
 
 /** Which of the given tables actually exist in this database. */

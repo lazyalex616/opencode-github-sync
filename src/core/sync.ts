@@ -22,7 +22,7 @@ import { type GuardReport, LargeChangeError, evaluateGuard, writeLocalExcludes }
 import { commitMessage, hostAlias } from "./host.js";
 import { applyOverrides, configMatchesRepo, findConfigFile } from "./overrides.js";
 import { type Roots, getDatabasePath, getRoots } from "./paths.js";
-import { saveToRecovery } from "./recovery.js";
+import { recoveryRoot, saveToRecovery } from "./recovery.js";
 import {
   LOCAL_RUNTIME_PATHS,
   type RepoState,
@@ -729,9 +729,16 @@ async function maybeImportSessions(ctx: Context): Promise<SyncResult["sessions"]
   }
 
   ctx.reporter.step("Importing sessions");
-  const result = await importSessions(getDatabasePath(ctx.roots), ctx.root, ctx.reporter);
+  const result = await importSessions(getDatabasePath(ctx.roots), ctx.root, ctx.reporter, {
+    recoveryRoot: recoveryRoot(ctx.roots),
+  });
   for (const failure of result.failed) {
     ctx.reporter.warn(`Could not import ${failure.file}: ${failure.reason}`);
+  }
+  if (result.skippedOtherSchema > 0) {
+    ctx.reporter.detail(
+      `Left ${result.skippedOtherSchema} session(s) from machines on another OpenCode major version`,
+    );
   }
   if (result.imported > 0) ctx.reporter.detail(`Imported ${result.imported} session(s)`);
   return { imported: result.imported, skipped: result.skippedOlder };
