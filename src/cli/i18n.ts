@@ -92,7 +92,8 @@ const en = {
   previewOutgoing: "Would push {n} change(s):",
   previewIncoming: "Would receive {n} change(s):",
   previewConfirm: "Go ahead?",
-  restartHint: "Restart OpenCode for the new configuration to take effect.",
+  restartHint:
+    "OpenCode 2 picks up the new configuration by itself. Restart OpenCode 1, or after a plugin changed.",
   largeTitle: "This push is unusually large:",
   largeFiles: "{n} new files (limit {limit})",
   largeBytes: "{size} in total (limit {limit})",
@@ -310,7 +311,7 @@ const en = {
   initSettings: "settings  {file}",
   initOverrides: "overrides {file}",
   initNext: "Next",
-  initRestart: "Restart OpenCode",
+  initRestart: "Restart OpenCode (OpenCode 2 only needs it for plugins)",
 
   sesTitle: "sessions",
   sesNoSqlite: "No SQLite driver available. Use Node 22.5+ or run under Bun.",
@@ -493,7 +494,7 @@ const zhCN: Catalog = {
   previewOutgoing: "将推送 {n} 处改动：",
   previewIncoming: "将接收 {n} 处改动：",
   previewConfirm: "继续吗？",
-  restartHint: "重启 OpenCode 后新配置才会生效。",
+  restartHint: "OpenCode 2 会自动读取新配置。OpenCode 1 或插件有变化时需要重启 OpenCode。",
   largeTitle: "这次推送的改动特别大：",
   largeFiles: "新增 {n} 个文件（上限 {limit}）",
   largeBytes: "总共 {size}（上限 {limit}）",
@@ -695,7 +696,7 @@ const zhCN: Catalog = {
   initSettings: "设置文件  {file}",
   initOverrides: "专属设置  {file}",
   initNext: "下一步",
-  initRestart: "重启 OpenCode",
+  initRestart: "重启 OpenCode（OpenCode 2 只有插件变化时才需要）",
 
   sesTitle: "会话",
   sesNoSqlite: "没有可用的 SQLite 驱动。请使用 Node 22.5+ 或 Bun。",

@@ -663,4 +663,27 @@ describe("OpenCode 2 machine files", () => {
     expect(read(path.join(b.state, "service.json"))).toContain('"B"');
     expect(fs.existsSync(path.join(b.state, "locks", "held.lock"))).toBe(true);
   });
+
+  it("shares cli.json without this machine's plugin paths", async () => {
+    const a = makeMachine("a");
+    useMachine(a);
+    write(path.join(a.config, "opencode.jsonc"), "{}\n");
+    write(
+      path.join(a.config, "cli.json"),
+      JSON.stringify({
+        theme: "tokyonight",
+        plugins: [
+          "file:///C:/Users/fake/.config/opencode/plugins/x-tui/tui.js",
+          "some-npm-tui-plugin",
+        ],
+      }),
+    );
+    await push({ settings: settings(), roots: getRoots() });
+
+    const b = makeMachine("b");
+    useMachine(b);
+    await pull({ settings: settings(), roots: getRoots() });
+    const cli = JSON.parse(read(path.join(b.config, "cli.json")));
+    expect(cli).toEqual({ theme: "tokyonight", plugins: ["some-npm-tui-plugin"] });
+  });
 });

@@ -130,7 +130,7 @@ async function runPullV2(announce: boolean): Promise<void> {
     if (result.changed) {
       notice(
         "info",
-        `Config updated from GitHub (${result.files.length} file(s)). Restart OpenCode to apply.`,
+        `Config updated from GitHub (${result.files.length} file(s)). OpenCode reloads it by itself; restart only if a plugin changed.`,
       );
     } else if (announce) {
       notice("info", "Config already up to date.");
@@ -217,7 +217,9 @@ async function executeSyncAction(args: { action?: string }): Promise<string> {
     );
   }
   if (result.restartRequired && result.changed) {
-    lines.push("Restart OpenCode for the new configuration to take effect.");
+    lines.push(
+      "OpenCode 2 picks up the new configuration by itself. Restart OpenCode 1, or after a plugin changed.",
+    );
   }
   if (reporter.lines.length > 0) {
     lines.push(...reporter.lines.filter((l) => l.level === "warn").map((l) => `! ${l.message}`));

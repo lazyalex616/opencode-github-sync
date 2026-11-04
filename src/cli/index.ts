@@ -577,7 +577,7 @@ function runHelp(): void {
   write();
   rule();
   write(
-    `  ${paint("docs", style.faint)}  ${paint("https://github.com/doomsday616/opencode-github-sync", style.muted)}`,
+    `  ${paint("docs", style.faint)}  ${paint("https://github.com/lazyalex616/opencode-github-sync", style.muted)}`,
   );
   write();
 }

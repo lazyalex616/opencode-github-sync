@@ -5,13 +5,13 @@
   "type": "module",
   "license": "MIT",
   "author": "doomsday616",
-  "homepage": "https://github.com/doomsday616/opencode-github-sync#readme",
+  "homepage": "https://github.com/lazyalex616/opencode-github-sync#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/doomsday616/opencode-github-sync.git"
+    "url": "git+https://github.com/lazyalex616/opencode-github-sync.git"
   },
   "bugs": {
-    "url": "https://github.com/doomsday616/opencode-github-sync/issues"
+    "url": "https://github.com/lazyalex616/opencode-github-sync/issues"
   },
   "keywords": [
     "opencode",
