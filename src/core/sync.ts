@@ -9,6 +9,7 @@ import {
   restoreDisabled,
   snapshotDisabled,
 } from "./categories.js";
+import { type BridgePreference, bridgeCredentials } from "./credentials.js";
 import {
   type GitResult,
   git,
@@ -211,6 +212,7 @@ async function runPush(ctx: Context): Promise<SyncResult> {
   }
 
   reporter.step("Staging local files");
+  await bridge(ctx, "database");
   stageIn(createStageContext(root, ctx.settings, reporter, ctx.force, ctx.roots));
 
   const sessions = await maybeExportSessions(ctx);
@@ -348,6 +350,7 @@ async function finishPush(ctx: Context, integrated: boolean): Promise<void> {
   if (integrated) {
     ctx.reporter.step("Writing out changes from other machines");
     stageOut(createStageContext(ctx.root, ctx.settings, ctx.reporter, false, ctx.roots));
+    await bridge(ctx, "file");
     await maybeImportSessions(ctx);
   }
   writeStageOutMark(ctx.root);
@@ -501,6 +504,7 @@ async function runPull(ctx: Context): Promise<SyncResult> {
       );
     }
     stageOut(createStageContext(root, ctx.settings, reporter, force, ctx.roots));
+    await bridge(ctx, "file");
     const sessions = await maybeImportSessions(ctx);
     const count = git(["ls-files"], { cwd: root }).stdout.split("\n").filter(Boolean).length;
     finishPull(ctx);
@@ -542,6 +546,7 @@ async function runPull(ctx: Context): Promise<SyncResult> {
     if (!ctx.dryRun && mark && head && mark !== head) {
       reporter.step("Writing out changes from an earlier sync");
       stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
+      await bridge(ctx, "file");
       const sessions = await maybeImportSessions(ctx);
       finishPull(ctx);
       return done(
@@ -597,6 +602,7 @@ async function runPull(ctx: Context): Promise<SyncResult> {
   }
 
   stageOut(createStageContext(root, ctx.settings, reporter, force, ctx.roots));
+  await bridge(ctx, "file");
   const sessions = await maybeImportSessions(ctx);
   finishPull(ctx);
 
@@ -692,6 +698,32 @@ function restoreStash(ctx: Context): void {
       "  git stash drop stash@{0}        # discard\n" +
       "Or re-run with --force to take the remote version.",
   );
+}
+
+// ── Credentials ─────────────────────────────────────────────────────────────
+
+/**
+ * Reconcile `auth.json` with OpenCode 2's credential table (no-op on
+ * OpenCode 1 and when credential sync is off). A failure is reported and the
+ * sync carries on: the file sync itself must never depend on it.
+ */
+async function bridge(ctx: Context, prefer: BridgePreference): Promise<void> {
+  if (!ctx.settings.includeCredentials || ctx.dryRun) return;
+  if (!(await sqliteAvailable())) return;
+  try {
+    const result = await bridgeCredentials(ctx.roots.data, prefer);
+    if (result.toFile.length > 0) {
+      ctx.reporter.detail(`Accounts from OpenCode recorded: ${result.toFile.join(", ")}`);
+    }
+    if (result.toDatabase.length > 0) {
+      ctx.reporter.detail(`Accounts applied to OpenCode: ${result.toDatabase.join(", ")}`);
+    }
+    if (result.removed.length > 0) {
+      ctx.reporter.detail(`Logged-out accounts removed: ${result.removed.join(", ")}`);
+    }
+  } catch (error) {
+    ctx.reporter.warn(`Could not bridge credentials: ${(error as Error).message}`);
+  }
 }
 
 // ── Sessions ────────────────────────────────────────────────────────────────
