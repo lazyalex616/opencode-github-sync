@@ -2,6 +2,30 @@
 
 [简体中文](./CHANGELOG.zh-CN.md)
 
+## 3.3.0
+
+OpenCode 2 support. Upgrade every machine before or together with OpenCode 2;
+see **Upgrading to OpenCode 2** in the README.
+
+### Security
+- **OpenCode 2's `service.json` is never committed.** OpenCode 2 writes it into the config folder (service settings and a password) and into the state folder (URL, process id and a password). The config folder is the repository, so 3.2.0 committed the first, and the state mirror carried the second. Both are now ignored, removed from the repository on the next push, and this machine's own copy survives pulling an older commit that still has another machine's. Lock files, prompt history and recent-file lists (`_state/locks/`, `prompt-history.jsonl`, `frecency.jsonl`) are machine-local for the same reason. The files stay in the repository's history; the password only opens the local background service on that machine.
+
+### Added
+- **OpenCode 2 sessions.** Sessions are exported from and imported into OpenCode 2's own tables (`session_v2`, `session_message`, `session_part`, instruction and attachment rows, and the message counter a continued conversation needs). A fresh OpenCode 2 database has no `session` table, so 3.2.0 failed every push there with `no such table: session`. OpenCode 2 sessions travel as format 2 shards; OpenCode 1 and OpenCode 2 machines can share a repository, each importing its own kind and leaving the other's recent shards in place.
+- **Imported sessions show up in `/session`.** OpenCode 2 lists only the current project's sessions, so each imported session is placed in the project OpenCode 2 uses for its folder on this machine, creating it the way OpenCode 2 would. A folder under the other machine's home folder is matched to the same folder under this one; a folder this machine does not have puts the session in the home folder's project.
+- **`opencode-sync repair-sessions [--apply]`** moves sessions OpenCode 2 migrated from 1.x into the project where `/session` looks for them (the synthetic `global` project and stale project rows of the same repository hide them). Preview by default.
+- **Credentials on OpenCode 2.** OpenCode 2 keeps accounts in its database and reads `auth.json` at most once (a database it creates fresh never reads it). With credential sync on, the account picked in OpenCode is written to `auth.json` before a push, and incoming accounts are applied to the database after a pull; a running OpenCode sees them on its next request. A renewed OAuth token updates the account in place, the later expiry wins a conflict, an account missing from an incoming copy never logs a machine out, and logging out on a machine removes the account from the shared copy. Change detection keeps only hashes, in `opencode-sync-credentials.json` next to the database.
+- **One machine renews a shared ChatGPT login.** Refreshing an OpenAI OAuth login invalidates its old refresh token, so machines sharing one login logged each other out. With credential sync on, the scheduled job now claims `refs/leases/openai` in the sync repository (an atomic compare-and-swap on the server) and only the winner refreshes, three days before expiry; the next sync hands the new token to the others. Set `"openaiRefreshLease": false` to turn it off.
+- **`cli.json`** (OpenCode 2's interface preferences) is part of the main config. Plugin entries that point into this machine's global plugins folder, which the 1.x-to-2 migration writes there, are dropped before sharing; OpenCode 2 finds those plugins without them.
+
+### Changed
+- OpenCode 2 reloads configuration by itself, so the restart hint now says a restart is needed only on OpenCode 1 or after a plugin changed.
+- The database is opened with a 10-second busy timeout, because OpenCode 2's background service keeps it open.
+- Repository links point to `lazyalex616/opencode-github-sync` (the account was renamed; the old links redirect).
+
+### Fixed
+- A received OpenCode 2 session is no longer exported back by the machine that received it.
+
 ## 3.2.0
 
 ### Added

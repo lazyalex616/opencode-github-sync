@@ -12,6 +12,7 @@ import {
 import { LargeChangeError } from "../core/guard.js";
 import { withSyncLock } from "../core/lock.js";
 import { getDatabasePath, getRoots } from "../core/paths.js";
+import { repairSessions } from "../core/repair.js";
 import { listSessions } from "../core/sessions.js";
 import {
   OVERRIDES_TEMPLATE,
@@ -314,6 +315,47 @@ async function runSessions(args: Args): Promise<void> {
   throw new SyncError(t("sesUnknown", { sub }));
 }
 
+async function runRepair(args: Args): Promise<void> {
+  banner(t("rpTitle"));
+  if (!(await sqliteAvailable())) {
+    fail(t("sesNoSqlite"));
+    write();
+    return;
+  }
+  const apply = args.flags.has("apply");
+  const result = await repairSessions(getDatabasePath(getRoots()), { apply });
+  if (!result.supported) {
+    info(t("rpNotV2"));
+    write();
+    return;
+  }
+  if (result.moves.length === 0 && result.unresolved.length === 0) {
+    ok(t("rpNothing"));
+    write();
+    return;
+  }
+  info(t("rpSummary", { sessions: result.sessions, moves: result.moves.length }));
+  const groups = new Map<string, number>();
+  let parked = 0;
+  for (const move of result.moves) {
+    if (move.parked) parked++;
+    const key = `${move.from}\u0000${move.to}`;
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  for (const [key, n] of groups) {
+    const [from, to] = key.split("\u0000");
+    detail(t("rpMove", { n, from: from ?? "", to: to ?? "" }));
+  }
+  if (parked > 0) detail(t("rpParked", { n: parked }));
+  for (const u of result.unresolved) {
+    detail(t("rpUnresolved", { n: u.count, directory: u.directory }));
+  }
+  write();
+  if (apply) ok(t("rpApplied", { n: result.applied }));
+  else if (result.moves.length > 0) info(t("rpDryRun"));
+  write();
+}
+
 function runOverrides(): void {
   banner(t("ovCliTitle"));
   const roots = getRoots();
@@ -518,6 +560,7 @@ function runHelp(): void {
   command("sessions enable | disable", t("helpSesToggle"));
   command("sessions include <id>", t("helpSesInclude"));
   command("sessions exclude <id>", t("helpSesExclude"));
+  command("repair-sessions [--apply]", t("helpRepair"));
 
   heading(t("helpLocal"));
   command("overrides", t("helpOverrides"));
@@ -534,7 +577,7 @@ function runHelp(): void {
   write();
   rule();
   write(
-    `  ${paint("docs", style.faint)}  ${paint("https://github.com/doomsday616/opencode-github-sync", style.muted)}`,
+    `  ${paint("docs", style.faint)}  ${paint("https://github.com/lazyalex616/opencode-github-sync", style.muted)}`,
   );
   write();
 }
@@ -585,6 +628,9 @@ async function main(): Promise<void> {
       return;
     case "sessions":
       await runSessions(args);
+      return;
+    case "repair-sessions":
+      await runRepair(args);
       return;
     case "autosync":
       await runAutosyncCommand(args);

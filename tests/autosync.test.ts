@@ -128,6 +128,26 @@ describe("autosync gate", () => {
     expect(readState(roots).lastSuccessAt).toBe(T0);
   });
 
+  it("renews the shared OpenAI login before the push, only with credential sync on", async () => {
+    const h = harness({
+      refreshLease: async () => {
+        h.calls.push("lease");
+        return "claimed; refreshed, valid until 2033-01-01T00:00:00.000Z";
+      },
+    });
+    await runAutosync(h.deps);
+    expect(h.calls).not.toContain("lease");
+
+    h.settings.includeCredentials = true;
+    h.clock.now += 10 * MIN;
+    await runAutosync(h.deps);
+    expect(h.calls.filter((c) => c === "lease" || c === "push").slice(-2)).toEqual([
+      "lease",
+      "push",
+    ]);
+    expect(h.logs.some((l) => l.includes("openai lease claimed"))).toBe(true);
+  });
+
   it("respects the interval since the last attempt", async () => {
     const h = harness();
     writeState(roots, { lastAttemptAt: T0 - 2 * MIN });

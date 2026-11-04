@@ -49,13 +49,20 @@ const DATA_FILES = ["sync-state.json"];
 const DATA_PATHS = ["storage/project", "storage/migration"];
 /**
  * State files that describe this machine, not its configuration: the current
- * UI session and the autosync scheduler's own bookkeeping.
+ * UI session, the autosync scheduler's own bookkeeping, and OpenCode 2's
+ * background-service record (`service.json` holds its URL, pid and a
+ * plaintext password) plus its per-machine prompt and file histories.
  */
 export const MACHINE_STATE_FILES = new Set([
   "session.json",
   "opencode-sync-autosync.json",
   "opencode-sync-autosync.json.tmp",
+  "service.json",
+  "prompt-history.jsonl",
+  "frecency.jsonl",
 ]);
+/** State directories that only hold this machine's lock files. */
+export const MACHINE_STATE_DIRS = new Set(["locks"]);
 
 const SKILL_LOCK = ".skill-lock.json";
 
@@ -105,7 +112,10 @@ export function stageIn(ctx: StageContext): void {
   if (settings.includeState) {
     if (fs.existsSync(roots.state)) {
       removeRecursive(repoState);
-      copyDirRecursive(roots.state, repoState, { excludeFiles: MACHINE_STATE_FILES });
+      copyDirRecursive(roots.state, repoState, {
+        excludeFiles: MACHINE_STATE_FILES,
+        excludeDirs: MACHINE_STATE_DIRS,
+      });
     } else {
       removeRecursive(repoState);
     }
@@ -194,6 +204,43 @@ function stageConfigIn(ctx: StageContext): void {
   if (normalizeConfigForRepo(ctx)) {
     ctx.reporter.detail("Removed per-machine overrides from the committed config");
   }
+  if (normalizeCliJson(ctx.roots.config)) {
+    ctx.reporter.detail("Removed this machine's plugin paths from cli.json");
+  }
+}
+
+/**
+ * OpenCode 2 keeps its interface preferences in `cli.json`. Upgrading from
+ * 1.x writes `plugins: ["file:///<home>/.config/opencode/plugins/..."]` into
+ * it: absolute paths into this machine's profile that point nowhere on
+ * another one. Plugins in that global folder are discovered without the
+ * entry, so those entries are dropped; everything else is shared as is.
+ * Returns true when the file was changed.
+ */
+export function normalizeCliJson(configRoot: string): boolean {
+  const file = path.join(configRoot, "cli.json");
+  let config: any;
+  try {
+    config = parseJsonc(fs.readFileSync(file, "utf8"));
+  } catch {
+    return false;
+  }
+  if (!config || !Array.isArray(config.plugins)) return false;
+  const local = (spec: unknown): boolean => {
+    if (typeof spec !== "string" || !/^file:\/\//i.test(spec)) return false;
+    let decoded = spec;
+    try {
+      decoded = decodeURIComponent(spec);
+    } catch {
+      // Keep the raw text.
+    }
+    return /\/\.config\/opencode\/plugins?\//i.test(decoded.replace(/\\/g, "/"));
+  };
+  const kept = config.plugins.filter((spec: unknown) => !local(spec));
+  if (kept.length === config.plugins.length) return false;
+  if (kept.length > 0) config.plugins = kept;
+  else delete config.plugins;
+  return writeIfDiffers(file, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 function extraPathEntries(ctx: StageContext): { entry: string; source: string; repo: string }[] {
@@ -256,7 +303,14 @@ export function stageOut(ctx: StageContext): void {
   }
 
   if (settings.includeState && fs.existsSync(repoState)) {
-    replaceDirAtomically(repoState, roots.state, { preserveRootFiles: MACHINE_STATE_FILES });
+    // A repository written by an older version may still carry these files.
+    // They are never copied in; this machine's own copies survive.
+    replaceDirAtomically(repoState, roots.state, {
+      excludeFiles: MACHINE_STATE_FILES,
+      excludeDirs: MACHINE_STATE_DIRS,
+      preserveRootFiles: MACHINE_STATE_FILES,
+      preserveRootDirs: MACHINE_STATE_DIRS,
+    });
   }
 
   if (settings.includeSkills && fs.existsSync(repoAgents)) {

@@ -571,3 +571,119 @@ describe("status", () => {
     expect(result.ahead).toBe(0);
   });
 });
+
+describe("OpenCode 2 machine files", () => {
+  const tracked = (root: string): string =>
+    execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" });
+
+  it("never commits the service record, locks or per-machine histories", async () => {
+    const a = makeMachine("a");
+    useMachine(a);
+    write(path.join(a.config, "opencode.jsonc"), "{}\n");
+    write(path.join(a.config, "service.json"), '{ "password": "FAKE" }\n');
+    write(path.join(a.state, "service.json"), '{ "password": "FAKE" }\n');
+    write(path.join(a.state, "prompt-history.jsonl"), "{}\n");
+    write(path.join(a.state, "frecency.jsonl"), "{}\n");
+    write(path.join(a.state, "locks", "x.lock"), "1\n");
+    write(path.join(a.state, "model.json"), "{}\n");
+
+    await push({ settings: settings(), roots: getRoots() });
+
+    const files = tracked(a.config);
+    expect(files).not.toMatch(/service\.json/);
+    expect(files).not.toMatch(/prompt-history|frecency|locks/);
+    expect(files).toMatch(/_state\/model\.json/);
+    expect(read(path.join(a.config, "service.json"))).toContain("FAKE");
+  });
+
+  it("untracks machine files an older version committed, keeping the local copies", async () => {
+    const a = makeMachine("a");
+    useMachine(a);
+    write(path.join(a.config, "opencode.jsonc"), "{}\n");
+    await push({ settings: settings(), roots: getRoots() });
+    // What 3.2.0 did: the files went in with everything else.
+    write(path.join(a.config, "service.json"), '{ "password": "A" }\n');
+    write(path.join(a.config, "_state", "service.json"), '{ "password": "A" }\n');
+    execFileSync("git", ["add", "-f", "service.json", "_state/service.json"], { cwd: a.config });
+    execFileSync("git", ["commit", "-qm", "old version"], { cwd: a.config });
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: a.config });
+
+    write(path.join(a.config, "command", "x.md"), "x\n");
+    await push({ settings: settings(), roots: getRoots() });
+
+    expect(tracked(a.config)).not.toMatch(/service\.json/);
+    expect(read(path.join(a.config, "service.json"))).toContain('"A"');
+  });
+
+  it("keeps this machine's service record when pulling a commit that still has another's", async () => {
+    const a = makeMachine("a");
+    useMachine(a);
+    write(path.join(a.config, "opencode.jsonc"), "{}\n");
+    await push({ settings: settings(), roots: getRoots() });
+
+    const b = makeMachine("b");
+    useMachine(b);
+    await pull({ settings: settings(), roots: getRoots() });
+    write(path.join(b.config, "service.json"), '{ "password": "B" }\n');
+
+    useMachine(a);
+    write(path.join(a.config, "service.json"), '{ "password": "A" }\n');
+    execFileSync("git", ["add", "-f", "service.json"], { cwd: a.config });
+    execFileSync("git", ["commit", "-qm", "old version"], { cwd: a.config });
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: a.config });
+
+    useMachine(b);
+    await pull({ settings: settings(), roots: getRoots() });
+    expect(read(path.join(b.config, "service.json"))).toContain('"B"');
+
+    const c = makeMachine("c");
+    useMachine(c);
+    await pull({ settings: settings(), roots: getRoots() });
+    expect(fs.existsSync(path.join(c.config, "service.json"))).toBe(false);
+  });
+
+  it("never writes another machine's state service record or locks", async () => {
+    const a = makeMachine("a");
+    useMachine(a);
+    write(path.join(a.config, "opencode.jsonc"), "{}\n");
+    write(path.join(a.state, "model.json"), '{ "m": 1 }\n');
+    await push({ settings: settings(), roots: getRoots() });
+    write(path.join(a.config, "_state", "service.json"), '{ "password": "A" }\n');
+    execFileSync("git", ["add", "-f", "_state/service.json"], { cwd: a.config });
+    execFileSync("git", ["commit", "-qm", "old version"], { cwd: a.config });
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: a.config });
+
+    const b = makeMachine("b");
+    useMachine(b);
+    write(path.join(b.state, "service.json"), '{ "password": "B" }\n');
+    write(path.join(b.state, "locks", "held.lock"), "1\n");
+    await pull({ settings: settings(), roots: getRoots() });
+
+    expect(read(path.join(b.state, "model.json"))).toContain('"m": 1');
+    expect(read(path.join(b.state, "service.json"))).toContain('"B"');
+    expect(fs.existsSync(path.join(b.state, "locks", "held.lock"))).toBe(true);
+  });
+
+  it("shares cli.json without this machine's plugin paths", async () => {
+    const a = makeMachine("a");
+    useMachine(a);
+    write(path.join(a.config, "opencode.jsonc"), "{}\n");
+    write(
+      path.join(a.config, "cli.json"),
+      JSON.stringify({
+        theme: "tokyonight",
+        plugins: [
+          "file:///C:/Users/fake/.config/opencode/plugins/x-tui/tui.js",
+          "some-npm-tui-plugin",
+        ],
+      }),
+    );
+    await push({ settings: settings(), roots: getRoots() });
+
+    const b = makeMachine("b");
+    useMachine(b);
+    await pull({ settings: settings(), roots: getRoots() });
+    const cli = JSON.parse(read(path.join(b.config, "cli.json")));
+    expect(cli).toEqual({ theme: "tokyonight", plugins: ["some-npm-tui-plugin"] });
+  });
+});

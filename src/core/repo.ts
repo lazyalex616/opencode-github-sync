@@ -43,6 +43,15 @@ ${STATE_DIR}/session.json
 ${STATE_DIR}/opencode-sync-autosync.json
 ${STATE_DIR}/opencode-sync-autosync.json.tmp
 
+# OpenCode 2 machine files: the background-service record (URL, pid and a
+# plaintext password, in both the config and the state directory), lock files
+# and per-machine histories
+/service.json
+${STATE_DIR}/service.json
+${STATE_DIR}/locks/
+${STATE_DIR}/prompt-history.jsonl
+${STATE_DIR}/frecency.jsonl
+
 # Empty directories recreated by OpenCode at runtime
 plugin/
 
@@ -58,12 +67,68 @@ export const DEFAULT_GITATTRIBUTES = `# Store and check out everything with LF.
 # pull look like a whole-file change.
 * text=auto eol=lf
 
-# Append-only history files merge cleanly by taking both sides
-${STATE_DIR}/prompt-history.jsonl text eol=lf merge=union
-
 # Session shards are gzipped JSON — binary, and never line-merged
 ${SESSIONS_DIR}/*.json.gz binary
 `;
+
+/**
+ * Files an older version could have committed that must never be tracked:
+ * machine secrets and per-machine histories. They are dropped from the index
+ * (never from disk) on every push, so upgrading cleans existing repositories.
+ */
+export const UNTRACKED_MACHINE_FILES = [
+  "service.json",
+  `${STATE_DIR}/service.json`,
+  `${STATE_DIR}/locks`,
+  `${STATE_DIR}/prompt-history.jsonl`,
+  `${STATE_DIR}/frecency.jsonl`,
+];
+
+/** Remove machine files from the index if a previous version committed them. */
+export function untrackMachineFiles(root: string): void {
+  git(
+    [
+      "rm",
+      "-r",
+      "-q",
+      "--cached",
+      "--ignore-unmatch",
+      "--",
+      ...UNTRACKED_MACHINE_FILES.map((p) => `:(top,literal)${p}`),
+    ],
+    { cwd: root },
+  );
+}
+
+/**
+ * Keep this machine's config-dir `service.json` exactly as it is across a sync.
+ *
+ * Git treats ignored files as expendable: a reset, fast-forward or rebase onto
+ * a commit that still tracks `service.json` (pushed by an older version)
+ * overwrites the local file, and replaying the commit that untracks it then
+ * deletes it. Returns the function that puts the original back, or removes
+ * another machine's copy when this machine had none.
+ */
+export function holdMachineFiles(root: string): () => void {
+  const file = path.join(root, "service.json");
+  let original: Buffer | undefined;
+  try {
+    original = fs.readFileSync(file);
+  } catch {
+    original = undefined;
+  }
+  return () => {
+    try {
+      if (original === undefined) {
+        fs.rmSync(file, { force: true });
+      } else if (!fs.existsSync(file) || !fs.readFileSync(file).equals(original)) {
+        fs.writeFileSync(file, original, { mode: 0o600 });
+      }
+    } catch {
+      // Best effort: OpenCode recreates its service record on start.
+    }
+  };
+}
 
 /**
  * Paths that exist inside the worktree but must stay out of every commit.

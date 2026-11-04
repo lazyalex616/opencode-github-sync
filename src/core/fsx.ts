@@ -276,6 +276,8 @@ export function replaceFileAtomically(
 export interface ReplaceDirOptions extends CopyOptions {
   /** Files at the destination root that survive the replacement. */
   preserveRootFiles?: Iterable<string>;
+  /** Directories at the destination root that survive the replacement. */
+  preserveRootDirs?: Iterable<string>;
 }
 
 /** Replace a whole directory atomically. */
@@ -299,6 +301,12 @@ export function replaceDirAtomically(
     const count = copyDirRecursive(src, temp, options);
     for (const file of options.preserveRootFiles ?? []) {
       copyFileIfExists(path.join(dst, file), path.join(temp, file));
+    }
+    for (const dir of options.preserveRootDirs ?? []) {
+      const kept = path.join(dst, dir);
+      if (fs.existsSync(kept) && fs.statSync(kept).isDirectory()) {
+        copyDirRecursive(kept, path.join(temp, dir));
+      }
     }
     if (fs.existsSync(dst)) fs.renameSync(dst, backup);
     fs.renameSync(temp, dst);
