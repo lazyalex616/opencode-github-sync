@@ -1,8 +1,8 @@
 #!/bin/sh
 # opencode-github-sync installer for macOS and Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.sh | sh -s -- --mode auto --repo owner/name
+#   curl -fsSL https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.sh | sh -s -- --mode auto --repo owner/name
 #
 # What it does, and nothing else:
 #   1. checks for Node.js 18+ and git, and offers to install a missing one
@@ -63,7 +63,7 @@ while [ $# -gt 0 ]; do
     --yes|-y) YES=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help)
-      sed -n '2,30p' "$0" 2>/dev/null || say "See https://github.com/doomsday616/opencode-github-sync"
+      sed -n '2,30p' "$0" 2>/dev/null || say "See https://github.com/lazyalex616/opencode-github-sync"
       exit 0 ;;
     *) err "unknown option: $1"; exit 2 ;;
   esac

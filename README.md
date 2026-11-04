@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/en/01-hero.png" alt="opencode-github-sync: one config, every machine" width="880">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/en/01-hero.png" alt="opencode-github-sync: one config, every machine" width="880">
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/opencode-github-sync"><img alt="npm" src="https://img.shields.io/npm/v/opencode-github-sync?style=flat-square&color=7aa2f7&labelColor=1a1e2b"></a>
-  <a href="https://github.com/doomsday616/opencode-github-sync/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/doomsday616/opencode-github-sync/ci.yml?style=flat-square&color=9ece6a&labelColor=1a1e2b&label=ci"></a>
-  <a href="https://github.com/doomsday616/opencode-github-sync/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-bb9af7?style=flat-square&labelColor=1a1e2b"></a>
+  <a href="https://github.com/lazyalex616/opencode-github-sync/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lazyalex616/opencode-github-sync/ci.yml?style=flat-square&color=9ece6a&labelColor=1a1e2b&label=ci"></a>
+  <a href="https://github.com/lazyalex616/opencode-github-sync/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-bb9af7?style=flat-square&labelColor=1a1e2b"></a>
   <img alt="platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-9ece6a?style=flat-square&labelColor=1a1e2b&label=runs%20on">
 </p>
 
 <p align="center">
-  <a href="https://github.com/doomsday616/opencode-github-sync/blob/main/README.zh-CN.md">简体中文</a>
+  <a href="https://github.com/lazyalex616/opencode-github-sync/blob/main/README.zh-CN.md">简体中文</a>
   &nbsp;·&nbsp;
   <a href="#install">Install</a>
   &nbsp;·&nbsp;
@@ -37,13 +37,13 @@ the background.
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.sh | sh
 ```
 
 **Windows** (PowerShell 5.1 or 7)
 
 ```powershell
-irm https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.ps1 | iex
 ```
 
 The installer checks for Node.js 18+ and git. If one is missing it shows the
@@ -59,11 +59,11 @@ Pass options to skip the questions, for example when provisioning a new
 machine:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.sh | sh -s -- --mode auto --repo you/my-opencode-config
+curl -fsSL https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.sh | sh -s -- --mode auto --repo you/my-opencode-config
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.ps1))) -Mode auto -Repo you/my-opencode-config
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.ps1))) -Mode auto -Repo you/my-opencode-config
 ```
 
 | Option | Meaning |
@@ -91,7 +91,7 @@ files, setup takes the repository's version and keeps the replaced files in a
 ## Pick your setup
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/en/03-pick-your-setup.png" alt="Command only, or primary device with autosync" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/en/03-pick-your-setup.png" alt="Command only, or primary device with autosync" width="760">
 </p>
 
 The first time you run `opencode-sync` it asks how this machine should work.
@@ -112,7 +112,7 @@ opt-in per machine: turning it on here never turns it on anywhere else.
 Run `opencode-sync` with no arguments.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/menu.svg" alt="The opencode-sync menu" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/menu.svg" alt="The opencode-sync menu" width="760">
 </p>
 
 Arrow keys or the shown hotkey pick an item, space ticks a checkbox, Enter
@@ -143,7 +143,7 @@ Every command from earlier versions still works and is still scriptable.
 ## What gets synced
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/en/02-how-it-works.png" alt="Each machine pushes and pulls through one private repository" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/en/02-how-it-works.png" alt="Each machine pushes and pulls through one private repository" width="760">
 </p>
 
 Your `~/.config/opencode` folder becomes a working copy of the repository.
@@ -171,7 +171,7 @@ and overrides files.
 ## How autosync works
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/en/04-autosync.png" alt="Each machine syncs on its own schedule, waits while you edit, and backs off on errors" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/en/04-autosync.png" alt="Each machine syncs on its own schedule, waits while you edit, and backs off on errors" width="760">
 </p>
 
 When autosync is on, the operating system starts `opencode-sync autosync run`
@@ -279,7 +279,7 @@ Session sync needs Node.js 22.5 or newer.
 ## Safety features
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/en/05-safety-net.png" alt="One sync at a time, all-or-nothing writes, restore earlier versions, large-change guard" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/en/05-safety-net.png" alt="One sync at a time, all-or-nothing writes, restore earlier versions, large-change guard" width="760">
 </p>
 
 - **Atomic replace.** Files are written beside their target and then swapped
@@ -476,11 +476,11 @@ disposable CI runners.
 
 ## Star history
 
-<a href="https://star-history.com/#doomsday616/opencode-github-sync&Date">
+<a href="https://star-history.com/#lazyalex616/opencode-github-sync&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date&theme=dark">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date">
-    <img alt="Star history chart" src="https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date" width="640">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lazyalex616/opencode-github-sync&type=Date&theme=dark">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lazyalex616/opencode-github-sync&type=Date">
+    <img alt="Star history chart" src="https://api.star-history.com/svg?repos=lazyalex616/opencode-github-sync&type=Date" width="640">
   </picture>
 </a>
 
@@ -488,7 +488,7 @@ disposable CI runners.
 
 ## License
 
-[MIT](https://github.com/doomsday616/opencode-github-sync/blob/main/LICENSE)
+[MIT](https://github.com/lazyalex616/opencode-github-sync/blob/main/LICENSE)
 
 <p align="center">
   <sub>If this saved you some time, a ⭐ is appreciated.</sub>

@@ -3,9 +3,9 @@
 Install opencode-github-sync on Windows and open its menu.
 
 .DESCRIPTION
-  irm https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.ps1 | iex
 
-  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.ps1))) -Mode auto -Repo owner/name
+  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.ps1))) -Mode auto -Repo owner/name
 
 What it does, and nothing else:
   1. checks for Node.js 18+ and git, and offers to install a missing one with

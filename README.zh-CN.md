@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/zh-CN/01-hero.png" alt="opencode-github-sync：一份配置，每台电脑都一样" width="880">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/zh-CN/01-hero.png" alt="opencode-github-sync：一份配置，每台电脑都一样" width="880">
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/opencode-github-sync"><img alt="npm" src="https://img.shields.io/npm/v/opencode-github-sync?style=flat-square&color=7aa2f7&labelColor=1a1e2b"></a>
-  <a href="https://github.com/doomsday616/opencode-github-sync/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/doomsday616/opencode-github-sync/ci.yml?style=flat-square&color=9ece6a&labelColor=1a1e2b&label=ci"></a>
-  <a href="https://github.com/doomsday616/opencode-github-sync/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-bb9af7?style=flat-square&labelColor=1a1e2b"></a>
+  <a href="https://github.com/lazyalex616/opencode-github-sync/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lazyalex616/opencode-github-sync/ci.yml?style=flat-square&color=9ece6a&labelColor=1a1e2b&label=ci"></a>
+  <a href="https://github.com/lazyalex616/opencode-github-sync/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-bb9af7?style=flat-square&labelColor=1a1e2b"></a>
   <img alt="platform" src="https://img.shields.io/badge/macOS%20·%20Windows%20·%20Linux-9ece6a?style=flat-square&labelColor=1a1e2b&label=runs%20on">
 </p>
 
 <p align="center">
-  <a href="https://github.com/doomsday616/opencode-github-sync/blob/main/README.md">English</a>
+  <a href="https://github.com/lazyalex616/opencode-github-sync/blob/main/README.md">English</a>
   &nbsp;·&nbsp;
   <a href="#安装">安装</a>
   &nbsp;·&nbsp;
@@ -34,13 +34,13 @@
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.sh | sh
 ```
 
 **Windows**（PowerShell 5.1 或 7 都可以）
 
 ```powershell
-irm https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.ps1 | iex
 ```
 
 安装脚本会先检查 Node.js 18+ 和 git。缺了哪个，就把安装命令列出来，问过你才执行。之后运行 `npm install -g opencode-github-sync@latest`，并打开菜单。
@@ -52,11 +52,11 @@ irm https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/inst
 带上参数就能跳过所有提问，适合给新电脑批量部署：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.sh | sh -s -- --mode auto --repo 你的用户名/my-opencode-config
+curl -fsSL https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.sh | sh -s -- --mode auto --repo 你的用户名/my-opencode-config
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/install.ps1))) -Mode auto -Repo 你的用户名/my-opencode-config
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/install.ps1))) -Mode auto -Repo 你的用户名/my-opencode-config
 ```
 
 | 参数 | 作用 |
@@ -81,7 +81,7 @@ Windows 上参数名相同，前面换成一个短横线：`-Repo`、`-Interval`
 ## 选择使用方式
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/zh-CN/03-pick-your-setup.png" alt="只装命令，或者设为自动同步的主力设备" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/zh-CN/03-pick-your-setup.png" alt="只装命令，或者设为自动同步的主力设备" width="760">
 </p>
 
 第一次运行 `opencode-sync` 时，它会问你这台电脑打算怎么用。
@@ -101,7 +101,7 @@ Windows 上参数名相同，前面换成一个短横线：`-Repo`、`-Interval`
 不带参数运行 `opencode-sync`：
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/menu.zh-CN.svg" alt="opencode-sync 菜单" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/menu.zh-CN.svg" alt="opencode-sync 菜单" width="760">
 </p>
 
 方向键或括号里的快捷键选择，空格勾选，回车确认，Esc 返回。如果输入不是终端（管道、脚本、CI），每个问题都会变成编号提问，所以也能用文件驱动整个菜单。
@@ -129,7 +129,7 @@ Windows 上参数名相同，前面换成一个短横线：`-Repo`、`-Interval`
 ## 同步哪些内容
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/zh-CN/02-how-it-works.png" alt="每台电脑都通过同一个私有仓库推送和拉取" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/zh-CN/02-how-it-works.png" alt="每台电脑都通过同一个私有仓库推送和拉取" width="760">
 </p>
 
 `~/.config/opencode` 文件夹本身就是仓库的工作目录，其他位置的内容会镜像到仓库里的子文件夹。
@@ -152,7 +152,7 @@ Windows 上参数名相同，前面换成一个短横线：`-Repo`、`-Interval`
 ## 自动同步是怎么工作的
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/zh-CN/04-autosync.png" alt="每台电脑各自定时同步，你在编辑时会等一等，出错了过一会儿再试" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/zh-CN/04-autosync.png" alt="每台电脑各自定时同步，你在编辑时会等一等，出错了过一会儿再试" width="760">
 </p>
 
 开启后，操作系统每隔几分钟、以及登录时（Windows 上还包括解锁和远程桌面重连时）运行一次 `opencode-sync autosync run`。每次只做一个判断：
@@ -227,7 +227,7 @@ opencode-sync sessions exclude ses_0ba19b4e7ffeMbSmWYi3Nj6xfZ  # 这个会话永
 ## 安全机制
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/doomsday616/opencode-github-sync/main/docs/images/zh-CN/05-safety-net.png" alt="同一时间只同步一次、写入要么全成功要么不动、可找回之前的版本、大改动先拦下" width="760">
+  <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/zh-CN/05-safety-net.png" alt="同一时间只同步一次、写入要么全成功要么不动、可找回之前的版本、大改动先拦下" width="760">
 </p>
 
 - **原子替换。** 文件先写在目标旁边，再一次性换过去。同步到一半崩溃，也不会留下写了一半、导致 OpenCode 启动不了的配置。
@@ -377,11 +377,11 @@ npm run build
 
 ## Star 趋势
 
-<a href="https://star-history.com/#doomsday616/opencode-github-sync&Date">
+<a href="https://star-history.com/#lazyalex616/opencode-github-sync&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date&theme=dark">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date">
-    <img alt="Star 趋势图" src="https://api.star-history.com/svg?repos=doomsday616/opencode-github-sync&type=Date" width="640">
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lazyalex616/opencode-github-sync&type=Date&theme=dark">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lazyalex616/opencode-github-sync&type=Date">
+    <img alt="Star 趋势图" src="https://api.star-history.com/svg?repos=lazyalex616/opencode-github-sync&type=Date" width="640">
   </picture>
 </a>
 
@@ -389,7 +389,7 @@ npm run build
 
 ## 许可证
 
-[MIT](https://github.com/doomsday616/opencode-github-sync/blob/main/LICENSE)
+[MIT](https://github.com/lazyalex616/opencode-github-sync/blob/main/LICENSE)
 
 <p align="center">
   <sub>如果它帮你省了时间，欢迎点个 ⭐。</sub>
