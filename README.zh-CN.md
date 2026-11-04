@@ -136,16 +136,16 @@ Windows 上参数名相同，前面换成一个短横线：`-Repo`、`-Interval`
 
 | 本机位置 | 仓库里的位置 | 内容 |
 | --- | --- | --- |
-| `~/.config/opencode/` | 根目录 | 配置、智能体、自定义命令、插件、主题、指令文件 |
+| `~/.config/opencode/` | 根目录 | 配置（`opencode.json(c)`、`tui.json(c)`、OpenCode 2 的 `cli.json`）、智能体、自定义命令、插件、主题、指令文件 |
 | `~/.local/share/opencode/` | `_data/` | 项目信息；开启后还有登录凭据 |
-| `~/.local/state/opencode/` | `_state/` | 模型缓存、最近文件、输入历史 |
+| `~/.local/state/opencode/` | `_state/` | 模型缓存等界面状态 |
 | `~/.agents/skills/` | `_agents/` | 用 `skills` 命令安装的技能 |
 | 选中的会话 | `_sessions/` | 每个会话一个压缩小文件 |
 | 额外路径 | `_extra/` | 你自己加的任何东西 |
 
 每一项都能在**同步哪些内容**里关掉。关掉的项双向都只留在本机：你的改动不会推上去，别的电脑的版本也不会覆盖你的。
 
-**永远不同步：** `opencode.db` 数据库、工具输出、快照、日志、`node_modules` 之类的生成目录，以及 opencode-sync 自己的设置文件和专属设置文件。
+**永远不同步：** `opencode.db` 数据库、工具输出、快照、日志、`node_modules` 之类的生成目录，以及 opencode-sync 自己的设置文件和专属设置文件。只属于某一台电脑的东西也不同步：OpenCode 2 的 `service.json`（配置目录和状态目录里各有一份，里面有后台服务的密码）、锁文件、输入历史和最近文件列表，以及 `cli.json` 里指向本机用户目录的插件条目。
 
 ---
 
@@ -222,6 +222,8 @@ opencode-sync sessions exclude ses_0ba19b4e7ffeMbSmWYi3Nj6xfZ  # 这个会话永
 
 时间范围、数量和大小上限在**同步哪些内容 → 会话同步设置**里调。会话同步需要 Node.js 22.5 或更新版本。
 
+**OpenCode 2。** 会话直接读写 OpenCode 2 自己的表。导入的会话会放进本机 OpenCode 2 为那个文件夹使用的项目里，所以在 `/session` 里能直接看到。另一台电脑用户目录下的文件夹，会对应到你用户目录下的同名文件夹；本机没有的文件夹，会话放进用户目录的项目里。本机正在运行的会话不会被替换；同一段对话在两台电脑上都继续聊过时，本机那份会先存进恢复目录，再用较新的那份替换。OpenCode 1 和 OpenCode 2 的电脑可以共用一个仓库：各自只导入自己那一类，不会删掉对方的会话。
+
 ---
 
 ## 安全机制
@@ -235,7 +237,7 @@ opencode-sync sessions exclude ses_0ba19b4e7ffeMbSmWYi3Nj6xfZ  # 这个会话永
 - **同一时间只跑一个。** 插件、命令行、菜单和定时任务共用一把锁。
 - **大改动保护。** 一次推送新增超过 300 个文件、总量超过 10 MB，或有单个文件超过 2 MB，会先停下来问你。上限可调。`node_modules`、`.venv`、`venv`、`__pycache__`、`dist`、`.cache` 这类生成目录永远不会推送。
 - **恢复目录。** 强制拉取、首次关联时以仓库为准、从历史恢复文件之前，即将被替换的文件会先复制到 `~/.local/share/opencode/opencode-sync-recovery/<时间>-<原因>/`。
-- **登录凭据默认不同步**，仓库是公开的时候直接拒绝。
+- **登录凭据默认不同步**，仓库是公开的时候直接拒绝。OpenCode 2 把账号存在数据库里而不是 `auth.json`：你在 OpenCode 里选的账号就是其他电脑收到的账号，传过来的副本里缺了某个账号也不会把本机登出。共用的 ChatGPT 登录同一时间只由一台电脑续期（由定时任务在到期前三天进行），电脑之间不会再因为刷新同一个登录而互相挤掉；不想要可以设 `"openaiRefreshLease": false`。
 - **不泄露主机名。** 提交里用固定的代号（或你起的名字）标记电脑，不用真实主机名。
 - **拒绝符号链接，不跟随**，同步不会顺着链接把别处的文件复制出去。
 
@@ -280,6 +282,7 @@ OpenCode 1.0–1.3.3 无法加载 3.1.0 及以后的版本，请在这些版本�
 | `opencode-sync autosync reset` | 清零失败次数 |
 | `opencode-sync sessions list\|enable\|disable` | 会话同步 |
 | `opencode-sync sessions include\|exclude <id>` | 某个会话始终同步或永不同步 |
+| `opencode-sync repair-sessions [--apply]` | OpenCode 2：把 `/session` 里看不到的会话移回所属项目（不加 `--apply` 只预览） |
 | `opencode-sync overrides` | 创建或找到专属设置文件 |
 | `opencode-sync config` | 打印设置 |
 
@@ -308,6 +311,7 @@ OpenCode 1.0–1.3.3 无法加载 3.1.0 及以后的版本，请在这些版本�
   "repo": { "owner": "you", "name": "my-opencode-config", "branch": "main" },
   "machineAlias": "laptop",
   "includeCredentials": false,
+  "openaiRefreshLease": true,
   "includeSkills": true,
   "includeState": true,
   "extraPaths": [".config/gh/config.yml"],
@@ -352,6 +356,33 @@ opencode-sync pull --force
 被替换的文件会先存进恢复目录。
 
 ---
+
+## 升级到 OpenCode 2
+
+先在每台电脑上把 opencode-github-sync 升到 3.3.0 或更新：3.2.x 读不了 OpenCode 2 的会话，还会把 OpenCode 2 的 `service.json` 推上去。
+
+1. 安装 OpenCode 2。npm 12 必须允许它的安装脚本，否则 `opencode` 命令只是个空壳：
+
+   ```bash
+   npm install -g @opencode/cli --allow-scripts=@opencode/cli
+   ```
+
+2. 可选：禁止 OpenCode 2 在后台自动更新（通过 npm 12 无人值守自更新可能把安装弄坏）：
+
+   ```bash
+   opencode service set env OPENCODE_DISABLE_AUTOUPDATE 1
+   ```
+
+3. 先启动一次 OpenCode 2，让它迁移 1.x 的数据，再让旧会话重新出现在 `/session` 里：
+
+   ```bash
+   opencode-sync repair-sessions          # 预览
+   opencode-sync repair-sessions --apply
+   ```
+
+OpenCode 2 会自动读取新配置，只有插件变化后才需要重启。
+
+**如果你在 OpenCode 2 上用 3.2.x 同步过**，仓库里可能有 `service.json` 和 `_state/service.json`。3.3.0 下次推送时会把它们删掉，但它们还留在仓库历史里。里面的密码只能打开那台电脑本地的后台服务；如果也想从历史里清掉，可以删掉仓库，再从一台电脑重新推送。
 
 ## 从 3.1.x 升级
 
