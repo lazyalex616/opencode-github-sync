@@ -4,6 +4,7 @@ import path from "node:path";
 import { git, parsePorcelainPaths } from "./git.js";
 import { LargeChangeError } from "./guard.js";
 import { hostAlias } from "./host.js";
+import { leaseEnabled, maybeRefreshOpenai } from "./lease.js";
 import { acquireSyncLock, releaseSyncLock } from "./lock.js";
 import { configMatchesRepo, findConfigFile } from "./overrides.js";
 import type { Roots } from "./paths.js";
@@ -253,6 +254,8 @@ export interface AutosyncDeps {
   log: (line: string) => void;
   /** Daily self-update hook; returns a one-line summary for the log. */
   selfUpdate?: () => string;
+  /** Shared-login renewal before a push; returns a one-line summary for the log. */
+  refreshLease?: (settings: Settings) => Promise<string>;
   messages: AutosyncMessages;
 }
 
@@ -355,6 +358,13 @@ export async function runAutosync(deps: AutosyncDeps, trigger = "scheduled"): Pr
 
   state = writeState(deps.roots, { lastAttemptAt: deps.now() });
   try {
+    if (deps.refreshLease && leaseEnabled(settings)) {
+      // Before the push, so a renewed login reaches the other machines now.
+      const lease = await deps.refreshLease(settings);
+      if (lease !== "not due" && lease !== "no OpenAI login here") {
+        deps.log(`${trigger}: openai lease ${lease}`);
+      }
+    }
     const result = await deps.push({
       settings,
       roots: deps.roots,
@@ -564,6 +574,7 @@ export function defaultDeps(
     },
     notify: () => false,
     log: (line) => appendLog(roots, line),
+    refreshLease: (settings) => maybeRefreshOpenai({ roots, settings }),
     messages: ENGLISH_MESSAGES,
     ...overrides,
   };

@@ -1,17 +1,17 @@
 {
   "name": "opencode-github-sync",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Sync your OpenCode config, skills, and selected sessions across machines via a private GitHub repo — as a plugin or a CLI.",
   "type": "module",
   "license": "MIT",
   "author": "doomsday616",
-  "homepage": "https://github.com/doomsday616/opencode-github-sync#readme",
+  "homepage": "https://github.com/lazyalex616/opencode-github-sync#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/doomsday616/opencode-github-sync.git"
+    "url": "git+https://github.com/lazyalex616/opencode-github-sync.git"
   },
   "bugs": {
-    "url": "https://github.com/doomsday616/opencode-github-sync/issues"
+    "url": "https://github.com/lazyalex616/opencode-github-sync/issues"
   },
   "keywords": [
     "opencode",

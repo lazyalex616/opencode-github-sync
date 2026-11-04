@@ -9,6 +9,7 @@ import {
   restoreDisabled,
   snapshotDisabled,
 } from "./categories.js";
+import { type BridgePreference, bridgeCredentials } from "./credentials.js";
 import {
   type GitResult,
   git,
@@ -22,7 +23,7 @@ import { type GuardReport, LargeChangeError, evaluateGuard, writeLocalExcludes }
 import { commitMessage, hostAlias } from "./host.js";
 import { applyOverrides, configMatchesRepo, findConfigFile } from "./overrides.js";
 import { type Roots, getDatabasePath, getRoots } from "./paths.js";
-import { saveToRecovery } from "./recovery.js";
+import { recoveryRoot, saveToRecovery } from "./recovery.js";
 import {
   LOCAL_RUNTIME_PATHS,
   type RepoState,
@@ -31,9 +32,11 @@ import {
   ensureRepo,
   excludePathspecs,
   headCommit,
+  holdMachineFiles,
   isLocalRuntimePath,
   readStageOutMark,
   unstageLocalRuntimePaths,
+  untrackMachineFiles,
   writeRepoMetadata,
   writeStageOutMark,
 } from "./repo.js";
@@ -168,26 +171,28 @@ export async function push(options: SyncOptions = {}): Promise<SyncResult> {
 
   if (!fs.existsSync(root)) throw new SyncError(`Config directory not found: ${root}`);
 
-  const state = adoptRepo(ctx, options.adopt ?? "remote", "first-push");
-  if (state === "adopted" && (options.adopt ?? "remote") === "remote" && !ctx.dryRun) {
-    // The remote's files are now in the worktree, but the untracked trees
-    // (skills, state, extra paths) still hold this machine's old contents.
-    // Write the remote's versions out first; staging the stale trees in would
-    // otherwise publish every skill this machine lacks as a deletion.
-    stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
-    writeStageOutMark(root);
-  }
-  assertRemoteReachable(root, branch, "Push", true);
-  writeRepoMetadata(root);
-  writeLocalExcludes(root, ctx.settings.guard?.skipDirs ?? []);
-
+  const restoreMachineFiles = holdMachineFiles(root);
   try {
+    const state = adoptRepo(ctx, options.adopt ?? "remote", "first-push");
+    if (state === "adopted" && (options.adopt ?? "remote") === "remote" && !ctx.dryRun) {
+      // The remote's files are now in the worktree, but the untracked trees
+      // (skills, state, extra paths) still hold this machine's old contents.
+      // Write the remote's versions out first; staging the stale trees in would
+      // otherwise publish every skill this machine lacks as a deletion.
+      stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
+      writeStageOutMark(root);
+    }
+    assertRemoteReachable(root, branch, "Push", true);
+    writeRepoMetadata(root);
+    writeLocalExcludes(root, ctx.settings.guard?.skipDirs ?? []);
+
     return await runPush(ctx);
   } finally {
     // Staging rewrites the on-disk config into its shareable form. Whatever
     // happens next — success, conflict, network failure — this machine must be
     // left with its own effective configuration, not the stripped one.
     applyOverrides(ctx.roots.config);
+    restoreMachineFiles();
   }
 }
 
@@ -207,12 +212,14 @@ async function runPush(ctx: Context): Promise<SyncResult> {
   }
 
   reporter.step("Staging local files");
+  await bridge(ctx, "database");
   stageIn(createStageContext(root, ctx.settings, reporter, ctx.force, ctx.roots));
 
   const sessions = await maybeExportSessions(ctx);
 
   git(["add", "-A"], { cwd: root });
   unstageLocalRuntimePaths(root);
+  untrackMachineFiles(root);
   unstageDisabled(ctx);
 
   const staged = git(["diff", "--cached", "--name-status"], { cwd: root });
@@ -343,6 +350,7 @@ async function finishPush(ctx: Context, integrated: boolean): Promise<void> {
   if (integrated) {
     ctx.reporter.step("Writing out changes from other machines");
     stageOut(createStageContext(ctx.root, ctx.settings, ctx.reporter, false, ctx.roots));
+    await bridge(ctx, "file");
     await maybeImportSessions(ctx);
   }
   writeStageOutMark(ctx.root);
@@ -472,9 +480,17 @@ function setAsideDisabled(ctx: Context): CategorySnapshot | null {
 
 export async function pull(options: SyncOptions = {}): Promise<SyncResult> {
   const ctx = prepare(options);
-  const { root, branch, reporter, force } = ctx;
+  fs.mkdirSync(ctx.root, { recursive: true });
+  const restoreMachineFiles = holdMachineFiles(ctx.root);
+  try {
+    return await runPull(ctx);
+  } finally {
+    restoreMachineFiles();
+  }
+}
 
-  fs.mkdirSync(root, { recursive: true });
+async function runPull(ctx: Context): Promise<SyncResult> {
+  const { root, branch, reporter, force } = ctx;
 
   if (!isGitRepo(root)) {
     const state = adoptRepo(ctx, "remote", "first-pull");
@@ -488,6 +504,7 @@ export async function pull(options: SyncOptions = {}): Promise<SyncResult> {
       );
     }
     stageOut(createStageContext(root, ctx.settings, reporter, force, ctx.roots));
+    await bridge(ctx, "file");
     const sessions = await maybeImportSessions(ctx);
     const count = git(["ls-files"], { cwd: root }).stdout.split("\n").filter(Boolean).length;
     finishPull(ctx);
@@ -529,6 +546,7 @@ export async function pull(options: SyncOptions = {}): Promise<SyncResult> {
     if (!ctx.dryRun && mark && head && mark !== head) {
       reporter.step("Writing out changes from an earlier sync");
       stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
+      await bridge(ctx, "file");
       const sessions = await maybeImportSessions(ctx);
       finishPull(ctx);
       return done(
@@ -584,6 +602,7 @@ export async function pull(options: SyncOptions = {}): Promise<SyncResult> {
   }
 
   stageOut(createStageContext(root, ctx.settings, reporter, force, ctx.roots));
+  await bridge(ctx, "file");
   const sessions = await maybeImportSessions(ctx);
   finishPull(ctx);
 
@@ -681,6 +700,32 @@ function restoreStash(ctx: Context): void {
   );
 }
 
+// ── Credentials ─────────────────────────────────────────────────────────────
+
+/**
+ * Reconcile `auth.json` with OpenCode 2's credential table (no-op on
+ * OpenCode 1 and when credential sync is off). A failure is reported and the
+ * sync carries on: the file sync itself must never depend on it.
+ */
+async function bridge(ctx: Context, prefer: BridgePreference): Promise<void> {
+  if (!ctx.settings.includeCredentials || ctx.dryRun) return;
+  if (!(await sqliteAvailable())) return;
+  try {
+    const result = await bridgeCredentials(ctx.roots.data, prefer);
+    if (result.toFile.length > 0) {
+      ctx.reporter.detail(`Accounts from OpenCode recorded: ${result.toFile.join(", ")}`);
+    }
+    if (result.toDatabase.length > 0) {
+      ctx.reporter.detail(`Accounts applied to OpenCode: ${result.toDatabase.join(", ")}`);
+    }
+    if (result.removed.length > 0) {
+      ctx.reporter.detail(`Logged-out accounts removed: ${result.removed.join(", ")}`);
+    }
+  } catch (error) {
+    ctx.reporter.warn(`Could not bridge credentials: ${(error as Error).message}`);
+  }
+}
+
 // ── Sessions ────────────────────────────────────────────────────────────────
 
 async function maybeExportSessions(ctx: Context): Promise<SyncResult["sessions"]> {
@@ -716,9 +761,16 @@ async function maybeImportSessions(ctx: Context): Promise<SyncResult["sessions"]
   }
 
   ctx.reporter.step("Importing sessions");
-  const result = await importSessions(getDatabasePath(ctx.roots), ctx.root, ctx.reporter);
+  const result = await importSessions(getDatabasePath(ctx.roots), ctx.root, ctx.reporter, {
+    recoveryRoot: recoveryRoot(ctx.roots),
+  });
   for (const failure of result.failed) {
     ctx.reporter.warn(`Could not import ${failure.file}: ${failure.reason}`);
+  }
+  if (result.skippedOtherSchema > 0) {
+    ctx.reporter.detail(
+      `Left ${result.skippedOtherSchema} session(s) from machines on another OpenCode major version`,
+    );
   }
   if (result.imported > 0) ctx.reporter.detail(`Imported ${result.imported} session(s)`);
   return { imported: result.imported, skipped: result.skippedOlder };

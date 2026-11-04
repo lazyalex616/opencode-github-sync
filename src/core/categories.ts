@@ -22,7 +22,7 @@ interface CategoryPaths {
 }
 
 export const CATEGORY_PATHS: Record<CategoryKey, CategoryPaths> = {
-  config: { files: ["opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc"] },
+  config: { files: ["opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc", "cli.json"] },
   instructions: { rootExtensions: [".md"] },
   agents: { dirs: ["agent", "agents"] },
   commands: { dirs: ["command", "commands"] },
