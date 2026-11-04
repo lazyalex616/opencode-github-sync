@@ -31,9 +31,11 @@ import {
   ensureRepo,
   excludePathspecs,
   headCommit,
+  holdMachineFiles,
   isLocalRuntimePath,
   readStageOutMark,
   unstageLocalRuntimePaths,
+  untrackMachineFiles,
   writeRepoMetadata,
   writeStageOutMark,
 } from "./repo.js";
@@ -168,26 +170,28 @@ export async function push(options: SyncOptions = {}): Promise<SyncResult> {
 
   if (!fs.existsSync(root)) throw new SyncError(`Config directory not found: ${root}`);
 
-  const state = adoptRepo(ctx, options.adopt ?? "remote", "first-push");
-  if (state === "adopted" && (options.adopt ?? "remote") === "remote" && !ctx.dryRun) {
-    // The remote's files are now in the worktree, but the untracked trees
-    // (skills, state, extra paths) still hold this machine's old contents.
-    // Write the remote's versions out first; staging the stale trees in would
-    // otherwise publish every skill this machine lacks as a deletion.
-    stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
-    writeStageOutMark(root);
-  }
-  assertRemoteReachable(root, branch, "Push", true);
-  writeRepoMetadata(root);
-  writeLocalExcludes(root, ctx.settings.guard?.skipDirs ?? []);
-
+  const restoreMachineFiles = holdMachineFiles(root);
   try {
+    const state = adoptRepo(ctx, options.adopt ?? "remote", "first-push");
+    if (state === "adopted" && (options.adopt ?? "remote") === "remote" && !ctx.dryRun) {
+      // The remote's files are now in the worktree, but the untracked trees
+      // (skills, state, extra paths) still hold this machine's old contents.
+      // Write the remote's versions out first; staging the stale trees in would
+      // otherwise publish every skill this machine lacks as a deletion.
+      stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
+      writeStageOutMark(root);
+    }
+    assertRemoteReachable(root, branch, "Push", true);
+    writeRepoMetadata(root);
+    writeLocalExcludes(root, ctx.settings.guard?.skipDirs ?? []);
+
     return await runPush(ctx);
   } finally {
     // Staging rewrites the on-disk config into its shareable form. Whatever
     // happens next — success, conflict, network failure — this machine must be
     // left with its own effective configuration, not the stripped one.
     applyOverrides(ctx.roots.config);
+    restoreMachineFiles();
   }
 }
 
@@ -213,6 +217,7 @@ async function runPush(ctx: Context): Promise<SyncResult> {
 
   git(["add", "-A"], { cwd: root });
   unstageLocalRuntimePaths(root);
+  untrackMachineFiles(root);
   unstageDisabled(ctx);
 
   const staged = git(["diff", "--cached", "--name-status"], { cwd: root });
@@ -472,9 +477,17 @@ function setAsideDisabled(ctx: Context): CategorySnapshot | null {
 
 export async function pull(options: SyncOptions = {}): Promise<SyncResult> {
   const ctx = prepare(options);
-  const { root, branch, reporter, force } = ctx;
+  fs.mkdirSync(ctx.root, { recursive: true });
+  const restoreMachineFiles = holdMachineFiles(ctx.root);
+  try {
+    return await runPull(ctx);
+  } finally {
+    restoreMachineFiles();
+  }
+}
 
-  fs.mkdirSync(root, { recursive: true });
+async function runPull(ctx: Context): Promise<SyncResult> {
+  const { root, branch, reporter, force } = ctx;
 
   if (!isGitRepo(root)) {
     const state = adoptRepo(ctx, "remote", "first-pull");
