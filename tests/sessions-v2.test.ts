@@ -382,6 +382,28 @@ describe("OpenCode 2 sessions", () => {
     expect(fs.readFileSync(file).equals(before)).toBe(true);
   });
 
+  it("leaves a shard alone that is already as new as this machine's copy", async () => {
+    if (!available) return;
+    const now = Date.now();
+    const work = path.join(root, "work");
+    fs.mkdirSync(work);
+    const source = await machineA(now, work);
+    const repo = path.join(root, "repo");
+    await exportSessions(source, repo, { ...settings(), now }, silentReporter);
+    const file = path.join(repo, "_sessions", "ses_one.json.gz");
+
+    // Another machine wrote the same session: same time, different bytes.
+    const { gzipSync } = await import("node:zlib");
+    const theirs = readShard(repo, "ses_one");
+    theirs.origin.home = "/home/someone-else";
+    const bytes = gzipSync(Buffer.from(JSON.stringify(theirs)));
+    fs.writeFileSync(file, bytes);
+
+    const result = await exportSessions(source, repo, { ...settings(), now }, silentReporter);
+    expect(result.written).toEqual(["ses_one"]);
+    expect(fs.readFileSync(file).equals(bytes)).toBe(true);
+  });
+
   it("round-trips binary attachments", async () => {
     if (!available) return;
     const now = Date.now();

@@ -388,6 +388,18 @@ export async function exportSessions(
     const keep = new Set<string>();
 
     for (const session of sessions) {
+      const file = shardPath(repoRoot, session.id);
+      // A shard that is already at least as new as this machine's copy stays
+      // as it is. It may differ in bytes only because another machine wrote it
+      // (its home, its placement); rewriting it would make every machine
+      // re-export every session it received, and could replace a newer copy
+      // this machine skipped on import with an older one.
+      if (existingShardTime(file) >= session.timeUpdated) {
+        keep.add(path.basename(file));
+        result.written.push(session.id);
+        continue;
+      }
+
       const shard =
         schema === "v2" ? buildShardV2(db, session.id, tables) : buildShard(db, session.id, tables);
       const payload = gzipSync(Buffer.from(JSON.stringify(shard)), { level: 9 });
@@ -401,7 +413,6 @@ export async function exportSessions(
         continue;
       }
 
-      const file = shardPath(repoRoot, session.id);
       keep.add(path.basename(file));
       // Only rewrite when the payload actually changed, otherwise every push
       // would produce a diff for every session purely from the gzip timestamp.
@@ -449,6 +460,16 @@ function pruneShards(
   }
   if (removed > 0)
     reporter.detail(`Removed ${removed} session shard(s) outside the retention window`);
+}
+
+/** `time_updated` of the session in an existing shard file, or -1 when there is none. */
+function existingShardTime(file: string): number {
+  if (!fs.existsSync(file)) return -1;
+  try {
+    return Number(parseShard(file).session.time_updated ?? -1);
+  } catch {
+    return -1;
+  }
 }
 
 function otherSchemaShard(file: string, schema: SessionSchema): AnyShard | undefined {
