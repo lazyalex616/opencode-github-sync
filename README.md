@@ -151,9 +151,9 @@ Everything else is mirrored into a folder inside it.
 
 | On your machine | In the repository | What it holds |
 | --- | --- | --- |
-| `~/.config/opencode/` | the root | config, agents, commands, plugins, themes, instruction files |
+| `~/.config/opencode/` | the root | config (`opencode.json(c)`, `tui.json(c)`, OpenCode 2's `cli.json`), agents, commands, plugins, themes, instruction files |
 | `~/.local/share/opencode/` | `_data/` | project metadata, and credentials if you opt in |
-| `~/.local/state/opencode/` | `_state/` | model cache, recent files, prompt history |
+| `~/.local/state/opencode/` | `_state/` | model cache and other interface state |
 | `~/.agents/skills/` | `_agents/` | skills installed with the `skills` CLI |
 | selected sessions | `_sessions/` | one small compressed file per session |
 | your extra paths | `_extra/` | anything else you add |
@@ -164,7 +164,10 @@ versions do not replace yours.
 
 **Never synced:** the `opencode.db` database, tool output, snapshots, logs,
 `node_modules` and other generated folders, and opencode-sync's own settings
-and overrides files.
+and overrides files. Nor anything that describes one machine: OpenCode 2's
+`service.json` (in the config and the state folder; it holds the background
+service's password), lock files, prompt history and recent-file lists, and
+`cli.json` plugin entries that point into this machine's home folder.
 
 ---
 
@@ -274,6 +277,17 @@ session is exported on its own as a small compressed file instead:
 Window, count and size limits are under **What to sync → Session settings**.
 Session sync needs Node.js 22.5 or newer.
 
+**OpenCode 2.** Sessions are read from and written to OpenCode 2's own tables.
+An imported session is placed in the project OpenCode 2 uses for its folder on
+this machine, so it shows up in `/session` there. A folder under the other
+machine's home folder is matched to the same folder under yours; a folder this
+machine does not have puts the session in your home folder's project. A
+session that is running on this machine is never replaced, and when a
+conversation was continued on both machines the local copy is saved to the
+recovery folder before the newer one replaces it. Machines on OpenCode 1 and
+OpenCode 2 can share one repository: each imports only its own kind and leaves
+the other's sessions in place.
+
 ---
 
 ## Safety features
@@ -298,7 +312,13 @@ Session sync needs Node.js 22.5 or newer.
   or a restore from history, the files about to be replaced are copied to
   `~/.local/share/opencode/opencode-sync-recovery/<time>-<reason>/`.
 - **Credentials are opt-in** and refused outright when the repository is
-  public.
+  public. On OpenCode 2, which keeps accounts in its database rather than in
+  `auth.json`, the account you pick in OpenCode is what other machines receive,
+  and an account that is missing from an incoming copy never logs this machine
+  out. Only one machine at a time renews a shared ChatGPT login (from the
+  scheduled job, three days before it expires), so machines no longer log each
+  other out by refreshing the same login; set `"openaiRefreshLease": false` to
+  turn that off.
 - **Your hostname stays private.** Commits name the machine by a stable
   pseudonym (or a name you choose), never by its real hostname.
 - **Symlinks are refused, not followed**, so a sync cannot copy files from
@@ -354,6 +374,7 @@ the configuration that stops OpenCode from loading it; `opencode-sync pull
 | `opencode-sync autosync reset` | Clear the failure counter |
 | `opencode-sync sessions list\|enable\|disable` | Session sync |
 | `opencode-sync sessions include\|exclude <id>` | Always or never sync one session |
+| `opencode-sync repair-sessions [--apply]` | OpenCode 2: move sessions missing from `/session` into their project (preview without `--apply`) |
 | `opencode-sync overrides` | Create or locate the overrides file |
 | `opencode-sync config` | Print the settings |
 
@@ -383,6 +404,7 @@ committed. The menu edits it for you; every key is optional.
   "repo": { "owner": "you", "name": "my-opencode-config", "branch": "main" },
   "machineAlias": "laptop",
   "includeCredentials": false,
+  "openaiRefreshLease": true,
   "includeSkills": true,
   "includeState": true,
   "extraPaths": [".config/gh/config.yml"],
@@ -444,6 +466,43 @@ opencode-sync pull --force
 The files it replaces go to the recovery folder first.
 
 ---
+
+## Upgrading to OpenCode 2
+
+Upgrade opencode-github-sync to 3.3.0 or later first, on every machine:
+3.2.x cannot read OpenCode 2 sessions and publishes OpenCode 2's
+`service.json`.
+
+1. Install OpenCode 2. With npm 12 the install scripts must be allowed, or
+   the `opencode` command is only a placeholder:
+
+   ```bash
+   npm install -g @opencode/cli --allow-scripts=@opencode/cli
+   ```
+
+2. Optionally stop OpenCode 2 from updating itself in the background (an
+   unattended self-update through npm 12 can break the install):
+
+   ```bash
+   opencode service set env OPENCODE_DISABLE_AUTOUPDATE 1
+   ```
+
+3. Start OpenCode 2 once, so it migrates your 1.x data, then let old sessions
+   show up in `/session` again:
+
+   ```bash
+   opencode-sync repair-sessions          # preview
+   opencode-sync repair-sessions --apply
+   ```
+
+OpenCode 2 reloads configuration by itself; restart it only after a plugin
+changed.
+
+**If you synced with 3.2.x on OpenCode 2**, your repository may contain
+`service.json` and `_state/service.json`. 3.3.0 removes them on its next push,
+but they stay in the repository's history. The password in them only opens the
+local background service on that machine; delete the repository and push again
+from one machine if you want them gone from history too.
 
 ## Upgrading from 3.1.x
 
