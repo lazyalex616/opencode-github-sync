@@ -11,9 +11,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/lazyalex616/opencode-github-sync/blob/main/README.md">English</a>
-  &nbsp;·&nbsp;
+  <a href="./README.md">English</a> · <b>简体中文</b>
+</p>
+
+<p align="center">
   <a href="#安装">安装</a>
+  &nbsp;·&nbsp;
+  <a href="#第一次运行">第一次运行</a>
+  &nbsp;·&nbsp;
+  <a href="#同步哪些内容">同步哪些内容</a>
   &nbsp;·&nbsp;
   <a href="#opencode-2">OpenCode 2</a>
   &nbsp;·&nbsp;
