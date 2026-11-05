@@ -173,6 +173,9 @@ describe("autosync gate", () => {
 
   it("staggers by a stable per-machine offset", async () => {
     const h = harness();
+    // A fixed alias: the default derives from the runner's hostname, and one
+    // hostname in 46 hashes to a zero offset, which makes no sleep at all.
+    h.settings.machineAlias = "laptop";
     delete process.env.OPENCODE_SYNC_NO_STAGGER;
     await runAutosync(h.deps);
     const sleep = h.calls.find((c) => c.startsWith("sleep:"));
