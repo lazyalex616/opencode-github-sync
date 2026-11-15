@@ -2,6 +2,15 @@
 
 [简体中文](./CHANGELOG.zh-CN.md)
 
+## 3.3.1
+
+### Fixed
+- **A session from a repository checked out at a different path lands in that repository (#10).** OpenCode 2 lists only the current project's sessions, and 3.3.0 found a session's project by its folder alone. When the same repository lived at `~/code/app` on one machine and `D:/work/app` on another, the session was parked in the home folder's project and never showed up in `/session` inside the repository. OpenCode 2 gives a repository the same project id on every machine (from its remote URL, else `.git/opencode`, else its first commit), so an imported session now goes to this machine's project with that id, in the same subfolder when it exists here.
+- **Parked sessions move into their repository later.** A session that arrived before the repository was cloned or opened on this machine was parked in the home folder's project and stayed there. The next pull after OpenCode has opened the repository here moves it into the repository's project. Only the session's location changes.
+
+### Contributors
+- @spock64 — reported #10
+
 ## 3.3.0
 
 OpenCode 2 support. Upgrade every machine before or together with OpenCode 2;

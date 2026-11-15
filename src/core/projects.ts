@@ -16,14 +16,18 @@ import type { SqliteDatabase } from "./sqlite.js";
  *
  *   - the newest project whose worktree is the session directory, or the
  *     deepest git worktree that contains it;
+ *   - otherwise the project with the session's own id, when this machine has
+ *     it: the same repository checked out at a different path;
  *   - otherwise a project created with the id OpenCode 2 derives itself
  *     (`sha1("directory:" + path)` for a plain directory);
  *   - otherwise, for a directory this machine does not have, the home
  *     directory's project, which is where `/session` is normally opened.
  *
- * Project ids are deterministic in OpenCode 2 (git remote, root commit or
- * directory path), so a project row from another machine is reused as is when
- * its worktree also exists here.
+ * Project ids are deterministic in OpenCode 2 (git remote URL, then
+ * `.git/opencode`, then root commit; directory path outside a repository), so
+ * one repository has the same id on every machine wherever it is checked out,
+ * and a project row from another machine is reused as is when its worktree
+ * also exists here.
  */
 
 export const GLOBAL_PROJECT_ID = "global";
@@ -184,6 +188,38 @@ export class ProjectResolver {
     return this.resolve(storedPath(path.resolve(home))) ?? this.createDirectoryProject(home);
   }
 
+  /** The project sessions are parked in, if this machine has one. */
+  homeProjectId(): string | undefined {
+    return this.resolve(storedPath(path.resolve(this.options.home)))?.id;
+  }
+
+  /** This machine's row for a project id, when its worktree exists here. */
+  private byId(projectId: string): ProjectRow | undefined {
+    if (!projectId || projectId === GLOBAL_PROJECT_ID) return undefined;
+    const project = this.projects.find((p) => p.id === projectId);
+    return project?.worktree && this.exists(project.worktree) ? project : undefined;
+  }
+
+  /** The session's subfolder inside this machine's checkout, or the checkout itself. */
+  private within(project: ProjectRow, subpath: string | null): string {
+    const rel = (subpath ?? "").replace(/\\/g, "/");
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) {
+      return project.worktree;
+    }
+    const candidate = path.join(project.worktree, ...rel.split("/"));
+    return this.exists(candidate) ? storedPath(candidate) : project.worktree;
+  }
+
+  private inside(target: ProjectRow, directory: string, fallback: string | null): Placement {
+    const exact = key(directory) === key(target.worktree);
+    return {
+      projectId: target.id,
+      directory: exact ? target.worktree : storedPath(directory),
+      path: relativePath(directory, target.worktree, fallback),
+      parked: false,
+    };
+  }
+
   /** Map a directory under the exporting machine's home onto this machine's home. */
   private translate(directory: string, originHome: string | undefined): string {
     if (this.exists(directory) || !originHome) return directory;
@@ -198,16 +234,13 @@ export class ProjectResolver {
   /** Where a session belongs on this machine. */
   place(session: PlacementInput): Placement {
     const directory = this.translate(session.directory, session.originHome);
-    const target = this.resolve(directory) ?? this.createDirectoryProject(directory);
-    if (target) {
-      const exact = key(directory) === key(target.worktree);
-      return {
-        projectId: target.id,
-        directory: exact ? target.worktree : storedPath(directory),
-        path: relativePath(directory, target.worktree, session.path),
-        parked: false,
-      };
-    }
+    const resolved = this.resolve(directory);
+    if (resolved) return this.inside(resolved, directory, session.path);
+    // The same repository checked out somewhere else on this machine.
+    const same = this.byId(session.projectId);
+    if (same) return this.inside(same, this.within(same, session.path), "");
+    const created = this.createDirectoryProject(directory);
+    if (created) return this.inside(created, directory, session.path);
     const home = this.home();
     if (!home) {
       return {
