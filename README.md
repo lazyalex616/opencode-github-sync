@@ -331,13 +331,30 @@ Instead each session is exported on its own as a small compressed file:
   its own.
 - **Lands in the right place.** On OpenCode 2 an imported session is placed in
   the project OpenCode 2 uses for its folder here. A folder under the other
-  machine's home is matched to the same folder under yours; a folder this
-  machine does not have puts the session in your home folder's project.
+  machine's home is matched to the same folder under yours, and a repository
+  checked out at a different path is matched by its project id. A session whose
+  folder or repository this machine does not have yet waits in your home
+  folder's project and moves into the repository's project on the first pull
+  after you open the repository here.
 - **Safe to import.** Each session is imported in one transaction, so a failure
   leaves your database as it was.
 
 Window, count and size limits are under **What to sync → Session settings**.
 Sessions need Node.js 22.5 or newer.
+
+**How projects are handled (OpenCode 2).** Projects are not synced as such.
+A project row records where a folder or repository lives on one machine, so
+each machine keeps its own, and OpenCode creates them when it opens a folder.
+What travels is the session, together with its project's id. OpenCode 2 gives
+a repository the same id on every machine (from its remote URL, else
+`.git/opencode`, else its first commit) and a plain folder an id from its
+path, so on import the session is put into the matching project here:
+
+| On this machine | The session goes to |
+|---|---|
+| Same folder (or the same folder under your home) | That folder's project |
+| Same repository, at another path | That repository's project, same subfolder if it exists |
+| Neither yet | Your home folder's project; moved into the repository's project on the first pull after you open it here |
 
 **Sessions missing from `/session` after upgrading to OpenCode 2?** OpenCode's
 own migration leaves some of them in a project `/session` never shows. Their
@@ -576,7 +593,9 @@ are still changing. **Diagnostics** in the menu shows whether the scheduled job
 is registered.
 
 **A synced session does not show up in `/session` (OpenCode 2).** Open
-OpenCode in the session's folder; `/session` lists only that folder's project.
+OpenCode in the session's folder or repository; `/session` lists only that
+project. A session whose repository you have not opened on this machine yet is
+in your home folder's project until the next pull after you open it.
 Sessions from before your upgrade to OpenCode 2: run
 `opencode-sync repair-sessions --apply`.
 

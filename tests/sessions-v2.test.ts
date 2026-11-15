@@ -433,3 +433,100 @@ describe("OpenCode 2 sessions", () => {
     expect(Buffer.from(blob.data).equals(bytes)).toBe(true);
   });
 });
+
+describe("one repository at different paths (#10)", () => {
+  const REPO_ID = "c".repeat(40);
+
+  function addRepo(db: SqliteDatabase, worktree: string): void {
+    db.prepare(
+      `INSERT INTO project (id, worktree, vcs, sandboxes, time_created, time_updated)
+       VALUES (?, ?, 'git', '[]', 1, 1)`,
+    ).run(REPO_ID, storedPath(worktree));
+  }
+
+  /** Machine A: a session in the `sub` folder of a checkout at `checkout`. */
+  async function exportFromA(now: number, checkout: string, repo: string): Promise<void> {
+    fs.mkdirSync(path.join(checkout, "sub"), { recursive: true });
+    const source = path.join(root, "a.db");
+    const db = await createDb(source);
+    addRepo(db, checkout);
+    addSession(db, {
+      id: "ses_repo",
+      project: REPO_ID,
+      directory: path.join(checkout, "sub"),
+      updated: now - DAY,
+    });
+    db.prepare("UPDATE session_v2 SET path = 'sub' WHERE id = 'ses_repo'").run();
+    db.close();
+    await exportSessions(source, repo, { ...settings(), now }, silentReporter);
+    fs.rmSync(checkout, { recursive: true });
+  }
+
+  it("places a session in this machine's checkout of the same repository", async () => {
+    if (!available) return;
+    const now = Date.now();
+    const repo = path.join(root, "repo");
+    await exportFromA(now, path.join(root, "a-code", "app"), repo);
+
+    const checkoutB = path.join(root, "b-work", "app");
+    fs.mkdirSync(path.join(checkoutB, "sub"), { recursive: true });
+    const home = path.join(root, "home-b");
+    fs.mkdirSync(home);
+    const target = path.join(root, "b.db");
+    const b = await createDb(target);
+    addRepo(b, checkoutB);
+    b.close();
+
+    const result = await importSessions(target, repo, silentReporter, { home, now });
+    expect(result.failed).toEqual([]);
+    expect(result.imported).toBe(1);
+
+    const db = await openDatabase(target, { readOnly: true });
+    const session = rows(db, "SELECT project_id, directory, path FROM session_v2")[0];
+    db.close();
+    expect(session.project_id).toBe(REPO_ID);
+    expect(session.directory).toBe(storedPath(path.join(checkoutB, "sub")));
+    expect(session.path).toBe("sub");
+  });
+
+  it("moves a parked session into the repository once this machine has it", async () => {
+    if (!available) return;
+    const now = Date.now();
+    const repo = path.join(root, "repo");
+    await exportFromA(now, path.join(root, "a-code", "app"), repo);
+
+    const home = path.join(root, "home-b");
+    fs.mkdirSync(home);
+    const target = path.join(root, "b.db");
+    (await createDb(target)).close();
+
+    await importSessions(target, repo, silentReporter, { home, now });
+    let db = await openDatabase(target, { readOnly: true });
+    expect(rows(db, "SELECT project_id FROM session_v2")[0].project_id).toBe(
+      directoryProjectId(home),
+    );
+    db.close();
+
+    // The repository is cloned on B and opened in OpenCode, which creates its project.
+    const checkoutB = path.join(root, "b-work", "app");
+    fs.mkdirSync(checkoutB, { recursive: true });
+    const b = await openDatabase(target);
+    addRepo(b, checkoutB);
+    b.close();
+
+    const again = await importSessions(target, repo, silentReporter, { home, now });
+    expect(again.imported).toBe(0);
+    expect(again.moved).toBe(1);
+    db = await openDatabase(target, { readOnly: true });
+    const session = rows(db, "SELECT project_id, directory, path FROM session_v2")[0];
+    expect(rows(db, "SELECT count(*) AS n FROM session_message")[0].n).toBe(2);
+    db.close();
+    expect(session.project_id).toBe(REPO_ID);
+    // `sub` does not exist in this checkout, so the session opens at its root.
+    expect(session.directory).toBe(storedPath(checkoutB));
+    expect(session.path).toBe("");
+
+    const third = await importSessions(target, repo, silentReporter, { home, now });
+    expect(third.moved).toBe(0);
+  });
+});
