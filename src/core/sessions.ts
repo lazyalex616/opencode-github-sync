@@ -151,6 +151,8 @@ export interface ExportResult {
 export interface ImportResult {
   imported: number;
   skippedOlder: number;
+  /** Sessions moved out of the home project into their own project here. */
+  moved: number;
   /** Shards written by a machine on the other OpenCode major version. */
   skippedOtherSchema: number;
   failed: { file: string; reason: string }[];
@@ -507,7 +509,13 @@ export async function importSessions(
   reporter: Reporter,
   options: ImportOptions = {},
 ): Promise<ImportResult> {
-  const result: ImportResult = { imported: 0, skippedOlder: 0, skippedOtherSchema: 0, failed: [] };
+  const result: ImportResult = {
+    imported: 0,
+    skippedOlder: 0,
+    moved: 0,
+    skippedOtherSchema: 0,
+    failed: [],
+  };
   const shardDir = path.join(repoRoot, SESSIONS_DIR);
   if (!fs.existsSync(shardDir)) return result;
 
@@ -560,6 +568,9 @@ export async function importSessions(
         // locally — or running right now — is left completely alone, so an
         // in-progress conversation is never clobbered by a stale copy.
         if ((local !== undefined && local >= incoming) || localBusy.has(sessionId)) {
+          if (schema === "v2" && !localBusy.has(sessionId)) {
+            if (unpark(db, shard as SessionShardV2, resolver!)) result.moved++;
+          }
           result.skippedOlder++;
           continue;
         }
@@ -709,6 +720,35 @@ function importShardV2(
 
 function hasRow(db: SqliteDatabase, table: string, id: string): boolean {
   return readRows(db, `SELECT 1 AS x FROM "${table}" WHERE id = ?`, [id]).length > 0;
+}
+
+/**
+ * Move a session that an earlier import parked in the home project into its
+ * own project, once this machine has one: the repository was cloned or opened
+ * here after the session arrived. Nothing but the session's location changes.
+ */
+function unpark(db: SqliteDatabase, shard: SessionShardV2, resolver: ProjectResolver): boolean {
+  const sessionId = String(shard.session.id);
+  const local = readRows(db, "SELECT project_id FROM session_v2 WHERE id = ?", [sessionId])[0];
+  const home = resolver.homeProjectId();
+  if (!local || !home || String(local.project_id) !== home) return false;
+  if (String(shard.session.project_id ?? "") === home) return false;
+
+  const placement = resolver.place({
+    directory: String(shard.session.directory ?? ""),
+    projectId: String(shard.session.project_id ?? ""),
+    path: shard.session.path == null ? null : String(shard.session.path),
+    originHome: shard.origin?.home,
+  });
+  if (placement.parked || placement.projectId === home) return false;
+  if (!hasRow(db, "project", placement.projectId)) return false;
+  db.prepare("UPDATE session_v2 SET project_id = ?, directory = ?, path = ? WHERE id = ?").run(
+    placement.projectId,
+    placement.directory,
+    placement.path,
+    sessionId,
+  );
+  return true;
 }
 
 /** List sessions available locally, newest first — powers `sessions list`. */

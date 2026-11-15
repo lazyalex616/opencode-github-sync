@@ -773,6 +773,9 @@ async function maybeImportSessions(ctx: Context): Promise<SyncResult["sessions"]
     );
   }
   if (result.imported > 0) ctx.reporter.detail(`Imported ${result.imported} session(s)`);
+  if (result.moved > 0) {
+    ctx.reporter.detail(`Moved ${result.moved} session(s) from the home project into their own`);
+  }
   return { imported: result.imported, skipped: result.skippedOlder };
 }
 
