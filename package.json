@@ -4,7 +4,7 @@
   "description": "Sync your OpenCode config, skills, and selected sessions across machines via a private GitHub repo — as a plugin or a CLI.",
   "type": "module",
   "license": "MIT",
-  "author": "doomsday616",
+  "author": "lazyalex616",
   "homepage": "https://github.com/lazyalex616/opencode-github-sync#readme",
   "repository": {
     "type": "git",
