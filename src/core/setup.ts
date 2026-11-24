@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { childEnv } from "./env.js";
 import { ensureFile } from "./fsx.js";
 import { type Roots, getRoots } from "./paths.js";
@@ -60,7 +61,7 @@ export function assertGhReady(): void {
   if (!ghAvailable()) {
     throw new SetupError(
       "The GitHub CLI (`gh`) is required for automatic setup.\n" +
-        "Install it from https://cli.github.com, or configure the repository by hand in opencode-sync.jsonc.",
+        "Install it from https://cli.github.com, or configure the repository by hand in ~/.config/opencode-sync/machine.jsonc.",
     );
   }
   if (!gh(["auth", "status"]).ok) {
@@ -222,6 +223,7 @@ function writeSetupFiles(
   } else {
     // A first-time file keeps the annotated template so the user can see every
     // available option instead of a bare JSON dump.
+    fs.mkdirSync(path.dirname(settingsPath(roots.config)), { recursive: true });
     fs.writeFileSync(
       settingsPath(roots.config),
       SETTINGS_TEMPLATE.replace("YOUR_GITHUB_USERNAME", target.owner).replace(

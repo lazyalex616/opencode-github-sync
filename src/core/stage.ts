@@ -13,9 +13,8 @@ import {
   syncDirIncremental,
   writeIfDiffers,
 } from "./fsx.js";
-import { git } from "./git.js";
 import { parseJsonc } from "./jsonc.js";
-import { configTextForRepo, findConfigFile } from "./overrides.js";
+import { findConfigFile } from "./overrides.js";
 import { AGENTS_DIR, DATA_DIR, type Roots, STATE_DIR, getRoots } from "./paths.js";
 import { saveToRecovery } from "./recovery.js";
 import type { Reporter } from "./reporter.js";
@@ -25,9 +24,9 @@ import { isLocalOwned, mergeLockSkills, upstreamNames } from "./upstream.js";
 /**
  * Move files between their real locations and the sync repository.
  *
- * The repository worktree *is* `~/.config/opencode`, so config files need no
- * copying at all. Everything that lives outside that directory is mirrored into
- * a prefixed folder:
+ * The repository is a working copy in the tool's own home. Config files are
+ * moved by `configsync.ts`, following the manifest. Everything that lives
+ * outside the config directory is mirrored into a prefixed folder:
  *
  *   ~/.local/share/opencode  ->  _data/
  *   ~/.local/state/opencode  ->  _state/
@@ -157,7 +156,6 @@ export function stageIn(ctx: StageContext): void {
   }
 
   stageExtraPathsIn(ctx);
-  stageConfigIn(ctx);
 }
 
 /** An `exclude` callback matching top-level directories by name. */
@@ -215,55 +213,22 @@ function mergeSkillLocks(
 }
 
 /**
- * Rewrite the repository's config file with override-owned keys removed.
- *
- * The baseline comes from `git show HEAD:<file>`, not from disk: the worktree
- * and the config directory are the same place, so the file on disk already has
- * this machine's overrides applied to it.
- *
- * Without overrides nothing happens at all, which keeps comments and formatting
- * byte-identical for the majority of users.
- *
- * Returns true when the file on disk was changed.
- */
-export function normalizeConfigForRepo(ctx: StageContext): boolean {
-  const configFile = findConfigFile(ctx.roots.config);
-  if (!configFile) return false;
-
-  const relative = path.relative(ctx.repoRoot, configFile).split(path.sep).join("/");
-  const head = git(["show", `HEAD:${relative}`], { cwd: ctx.repoRoot });
-  const text = configTextForRepo(ctx.roots.config, head.ok ? head.stdout : undefined);
-  if (!text) return false;
-
-  return writeIfDiffers(configFile, text);
-}
-
-function stageConfigIn(ctx: StageContext): void {
-  if (normalizeConfigForRepo(ctx)) {
-    ctx.reporter.detail("Removed per-machine overrides from the committed config");
-  }
-  if (normalizeCliJson(ctx.roots.config)) {
-    ctx.reporter.detail("Removed this machine's plugin paths from cli.json");
-  }
-}
-
-/**
  * OpenCode 2 keeps its interface preferences in `cli.json`. Upgrading from
  * 1.x writes `plugins: ["file:///<home>/.config/opencode/plugins/..."]` into
  * it: absolute paths into this machine's profile that point nowhere on
  * another one. Plugins in that global folder are discovered without the
- * entry, so those entries are dropped; everything else is shared as is.
- * Returns true when the file was changed.
+ * entry, so those entries are dropped from the shared copy; everything else
+ * is shared as is. Returns the shared text, or `undefined` when nothing needs
+ * to change.
  */
-export function normalizeCliJson(configRoot: string): boolean {
-  const file = path.join(configRoot, "cli.json");
+export function cliJsonForRepo(text: string): string | undefined {
   let config: any;
   try {
-    config = parseJsonc(fs.readFileSync(file, "utf8"));
+    config = parseJsonc(text);
   } catch {
-    return false;
+    return undefined;
   }
-  if (!config || !Array.isArray(config.plugins)) return false;
+  if (!config || !Array.isArray(config.plugins)) return undefined;
   const local = (spec: unknown): boolean => {
     if (typeof spec !== "string" || !/^file:\/\//i.test(spec)) return false;
     let decoded = spec;
@@ -275,10 +240,10 @@ export function normalizeCliJson(configRoot: string): boolean {
     return /\/\.config\/opencode\/plugins?\//i.test(decoded.replace(/\\/g, "/"));
   };
   const kept = config.plugins.filter((spec: unknown) => !local(spec));
-  if (kept.length === config.plugins.length) return false;
+  if (kept.length === config.plugins.length) return undefined;
   if (kept.length > 0) config.plugins = kept;
   else delete config.plugins;
-  return writeIfDiffers(file, `${JSON.stringify(config, null, 2)}\n`);
+  return `${JSON.stringify(config, null, 2)}\n`;
 }
 
 function extraPathEntries(ctx: StageContext): { entry: string; source: string; repo: string }[] {

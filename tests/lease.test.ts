@@ -13,7 +13,7 @@ import {
   maybeRefreshOpenai,
   refreshInChild,
 } from "../src/core/lease.js";
-import type { Roots } from "../src/core/paths.js";
+import { type Roots, repoDir } from "../src/core/paths.js";
 import { DEFAULT_SETTINGS, type Settings } from "../src/core/settings.js";
 
 /**
@@ -55,9 +55,11 @@ function machine(name: string, expires: number): Roots {
     agents: path.join(base, "agents"),
     cache: path.join(base, "cache"),
   };
-  run(sandbox, "clone", "-q", remote, roots.config);
-  run(roots.config, "config", "user.name", name);
-  run(roots.config, "config", "user.email", `${name}@test`);
+  const repo = repoDir(roots);
+  fs.mkdirSync(path.dirname(repo), { recursive: true });
+  run(sandbox, "clone", "-q", remote, repo);
+  run(repo, "config", "user.name", name);
+  run(repo, "config", "user.email", `${name}@test`);
   fs.mkdirSync(roots.data, { recursive: true });
   fs.writeFileSync(
     path.join(roots.data, "auth.json"),

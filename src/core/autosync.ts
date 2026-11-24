@@ -1,16 +1,24 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { pendingConfigChanges } from "./configsync.js";
 import { git, parsePorcelainPaths } from "./git.js";
 import { LargeChangeError } from "./guard.js";
 import { hostAlias } from "./host.js";
 import { leaseEnabled, maybeRefreshOpenai } from "./lease.js";
 import { acquireSyncLock, releaseSyncLock } from "./lock.js";
-import { configMatchesRepo, findConfigFile } from "./overrides.js";
-import type { Roots } from "./paths.js";
+import { ensureMigrated } from "./migrate.js";
+import { type Roots, repoDir, toolRoot } from "./paths.js";
 import { excludePathspecs, readStageOutMarkTime } from "./repo.js";
 import { CollectingReporter } from "./reporter.js";
-import { type Settings, loadSettings, repoBranch } from "./settings.js";
+import {
+  type Settings,
+  loadSettings,
+  readRuntime,
+  repoBranch,
+  runtimePath,
+  writeRuntime,
+} from "./settings.js";
 import { PushRaceError, type SyncOptions, type SyncResult, pull, push } from "./sync.js";
 import { describeReconcile, reconcileUpstream } from "./upstream.js";
 
@@ -66,36 +74,22 @@ export interface AutosyncState {
 // ── State and log files ─────────────────────────────────────────────────────
 
 export function statePath(roots: Roots): string {
-  return path.join(roots.state, STATE_FILE);
+  return runtimePath(roots.config);
 }
 
 export function logPath(roots: Roots): string {
-  return path.join(roots.config, "logs", LOG_FILE);
+  return path.join(toolRoot(roots), "logs", LOG_FILE);
 }
 
 export function readState(roots: Roots): AutosyncState {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(statePath(roots), "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  return readRuntime(roots.config) as AutosyncState;
 }
 
 export function writeState(roots: Roots, patch: Partial<AutosyncState>): AutosyncState {
-  const next = { ...readState(roots), ...patch };
-  try {
-    const file = statePath(roots);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    // Write-then-rename, so a concurrent reader never sees half a file and
-    // silently resets the failure counter.
-    const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
-    fs.renameSync(tmp, file);
-  } catch {
-    // Best effort: losing bookkeeping costs one extra attempt, nothing more.
-  }
-  return next;
+  // Write-then-rename inside `writeRuntime`, so a concurrent reader never sees
+  // half a file and silently resets the failure counter. The pause lives in
+  // the same file and is kept.
+  return writeRuntime(roots.config, patch as Record<string, unknown>) as AutosyncState;
 }
 
 export function appendLog(roots: Roots, line: string, now = Date.now()): void {
@@ -168,7 +162,6 @@ export const SETTLE_SKIP_FILES = new Set([
   "model.json",
   "bun.lock",
   "package-lock.json",
-  "opencode-sync.jsonc",
   STATE_FILE,
   `${STATE_FILE}.tmp`,
 ]);
@@ -554,7 +547,11 @@ export function defaultDeps(
   roots: Roots,
   overrides: Partial<AutosyncDeps> & { home: string },
 ): AutosyncDeps {
-  const settingsLoader = () => loadSettings(roots.config);
+  const settingsLoader = () => {
+    ensureMigrated(roots);
+    return loadSettings(roots.config);
+  };
+  const repo = repoDir(roots);
   return {
     roots,
     now: () => Date.now(),
@@ -566,17 +563,17 @@ export function defaultDeps(
     fetchBehind: () => {
       const settings = settingsLoader();
       const branch = repoBranch(settings);
-      const fetched = git(["fetch", "origin", branch], { cwd: roots.config, timeoutMs: 120_000 });
+      const fetched = git(["fetch", "origin", branch], { cwd: repo, timeoutMs: 120_000 });
       if (!fetched.ok) return { ok: false, behind: 0, error: oneLine(fetched.stderr) };
-      const count = git(["rev-list", "--count", `HEAD..origin/${branch}`], { cwd: roots.config });
+      const count = git(["rev-list", "--count", `HEAD..origin/${branch}`], { cwd: repo });
       return { ok: true, behind: Number(count.stdout) || 0 };
     },
-    repoSnapshot: () => snapshotRepo(roots.config, repoBranch(settingsLoader())),
+    repoSnapshot: () => snapshotRepo(roots, settingsLoader()),
     newestWrite: (settings) =>
       newestWrite(watchedTrees(roots, settings), settings.guard?.skipDirs ?? []),
     newestUntrackedWrite: (settings) =>
       newestWrite(untrackedTrees(roots, settings, overrides.home), settings.guard?.skipDirs ?? []),
-    stageOutTime: () => readStageOutMarkTime(roots.config),
+    stageOutTime: () => readStageOutMarkTime(repo),
     tryLock: () => {
       const lock = acquireSyncLock(roots.config, { waitMs: 0 });
       return lock ? { release: () => releaseSyncLock(lock) } : null;
@@ -588,7 +585,7 @@ export function defaultDeps(
       describeReconcile(
         reconcileUpstream({
           roots,
-          repoRoot: roots.config,
+          repoRoot: repo,
           settings,
           alias: hostAlias(settings.machineAlias),
         }),
@@ -598,30 +595,19 @@ export function defaultDeps(
   };
 }
 
-/** Local view of the repository: no network. */
-export function snapshotRepo(root: string, branch: string): RepoSnapshot {
+/**
+ * Local view of the working copy, no network. "Dirty" means something a push
+ * would publish: an uncommitted file in the working copy, or a listed config
+ * file whose content differs from it.
+ */
+export function snapshotRepo(roots: Roots, settings: Settings): RepoSnapshot {
+  const root = repoDir(roots);
+  const branch = repoBranch(settings);
   const status = git(["status", "--porcelain", "--", ".", ...excludePathspecs()], { cwd: root });
   if (!status.ok) return { ok: false, dirty: false, ahead: 0, error: oneLine(status.stderr) };
   const ahead = git(["rev-list", "--count", `origin/${branch}..HEAD`], { cwd: root });
-  return {
-    ok: true,
-    dirty: realChanges(root, status.stdout) > 0,
-    ahead: ahead.ok ? Number(ahead.stdout) || 0 : 0,
-  };
-}
-
-/**
- * Uncommitted files, not counting the config file when its only difference
- * is this machine's overrides — the expected, permanent difference.
- */
-function realChanges(root: string, porcelain: string): number {
-  const paths = parsePorcelainPaths(porcelain);
-  if (paths.length === 0) return 0;
-  const configFile = findConfigFile(root);
-  if (!configFile) return paths.length;
-  const rel = path.relative(root, configFile).split(path.sep).join("/");
-  if (!paths.includes(rel)) return paths.length;
-  const head = git(["show", `HEAD:${rel}`], { cwd: root });
-  if (!configMatchesRepo(root, head.ok ? head.stdout : undefined)) return paths.length;
-  return paths.length - 1;
+  const dirty =
+    parsePorcelainPaths(status.stdout).length > 0 ||
+    pendingConfigChanges({ roots, repoRoot: root, settings }).length > 0;
+  return { ok: true, dirty, ahead: ahead.ok ? Number(ahead.stdout) || 0 : 0 };
 }

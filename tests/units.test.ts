@@ -6,7 +6,7 @@ import { parseArgs } from "../src/cli/args.js";
 import { CATALOGS, detectLang, normalizeLang, t } from "../src/cli/i18n.js";
 import { Ui } from "../src/cli/ui.js";
 import { redactText, redactValue, tarGz } from "../src/core/bundle.js";
-import { disabledCategories, disabledPathspecs, isDisabledPath } from "../src/core/categories.js";
+import { disabledCategories, isDisabledPath } from "../src/core/categories.js";
 import { gitBlobId } from "../src/core/compare.js";
 import { proxyEnv } from "../src/core/env.js";
 import { excludeFileContent } from "../src/core/guard.js";
@@ -86,7 +86,6 @@ describe("categories", () => {
     expect(isDisabledPath("skills/x/SKILL.md", disabled)).toBe(false);
     expect(isDisabledPath("plugin/x.ts", disabled)).toBe(true);
     expect(isDisabledPath("opencode.jsonc", disabled)).toBe(false);
-    expect(disabledPathspecs(disabled)).toContain(":(top,glob)*.md");
   });
 });
 

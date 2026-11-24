@@ -4,9 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { git } from "../src/core/git.js";
-import { getRoots } from "../src/core/paths.js";
+import { getRoots, repoDirFor } from "../src/core/paths.js";
 import { CollectingReporter } from "../src/core/reporter.js";
-import { DEFAULT_SETTINGS, type Settings } from "../src/core/settings.js";
+import {
+  DEFAULT_SETTINGS,
+  type Settings,
+  overridesPath,
+  settingsPath,
+} from "../src/core/settings.js";
 import { pull, push, status } from "../src/core/sync.js";
 
 /**
@@ -91,6 +96,13 @@ const write = (file: string, content: string): void => {
 
 const read = (file: string): string => fs.readFileSync(file, "utf8");
 
+/** The machine's git working copy (4.0: in the tool's home, not the config dir). */
+const repo = (m: Machine): string => repoDirFor(m.config);
+/** The machine's overrides file (4.0: in the tool's home). */
+const overridesFile = (m: Machine): string => overridesPath(m.config);
+const tracked = (m: Machine): string =>
+  execFileSync("git", ["ls-files"], { cwd: repo(m), encoding: "utf8" });
+
 describe("push and pull", () => {
   it("moves configuration from one machine to another", async () => {
     const a = makeMachine("a");
@@ -170,9 +182,9 @@ describe("push and pull", () => {
 
     // Machine B commits locally without pushing.
     useMachine(b);
-    write(path.join(b.config, "opencode.jsonc"), '{ "b": 2 }\n');
-    execFileSync("git", ["add", "-A"], { cwd: b.config, stdio: "pipe" });
-    execFileSync("git", ["commit", "-m", "local"], { cwd: b.config, stdio: "pipe" });
+    write(path.join(repo(b), "opencode.jsonc"), '{ "b": 2 }\n');
+    execFileSync("git", ["add", "-A"], { cwd: repo(b), stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "local"], { cwd: repo(b), stdio: "pipe" });
 
     await expect(pull({ settings: settings(), roots: getRoots() })).rejects.toThrow(
       /never pushed/i,
@@ -189,8 +201,9 @@ describe("push and pull", () => {
     useMachine(b);
     await pull({ settings: settings(), roots: getRoots() });
     write(path.join(b.config, "opencode.jsonc"), '{ "local": true }\n');
-    execFileSync("git", ["add", "-A"], { cwd: b.config, stdio: "pipe" });
-    execFileSync("git", ["commit", "-m", "local"], { cwd: b.config, stdio: "pipe" });
+    write(path.join(repo(b), "opencode.jsonc"), '{ "local": true }\n');
+    execFileSync("git", ["add", "-A"], { cwd: repo(b), stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "local"], { cwd: repo(b), stdio: "pipe" });
 
     await pull({ settings: settings(), roots: getRoots(), force: true });
     expect(read(path.join(b.config, "opencode.jsonc"))).toContain("shared");
@@ -227,8 +240,7 @@ describe("push and pull", () => {
     write(path.join(a.data, "opencode.db-wal"), "WAL");
     await push({ settings: settings(), roots: getRoots() });
 
-    const tracked = execFileSync("git", ["ls-files"], { cwd: a.config, encoding: "utf8" });
-    expect(tracked).not.toMatch(/opencode\.db/);
+    expect(tracked(a)).not.toMatch(/opencode\.db/);
   });
 
   it("keeps credentials out of the repository unless enabled", async () => {
@@ -238,12 +250,10 @@ describe("push and pull", () => {
     write(path.join(a.data, "auth.json"), '{ "token": "secret" }');
 
     await push({ settings: settings(), roots: getRoots() });
-    let tracked = execFileSync("git", ["ls-files"], { cwd: a.config, encoding: "utf8" });
-    expect(tracked).not.toMatch(/auth\.json/);
+    expect(tracked(a)).not.toMatch(/auth\.json/);
 
     await push({ settings: settings({ includeCredentials: true }), roots: getRoots() });
-    tracked = execFileSync("git", ["ls-files"], { cwd: a.config, encoding: "utf8" });
-    expect(tracked).toMatch(/_data\/auth\.json/);
+    expect(tracked(a)).toMatch(/_data\/auth\.json/);
   });
 
   it("removes credentials from the repository when the option is turned off", async () => {
@@ -254,8 +264,7 @@ describe("push and pull", () => {
     await push({ settings: settings({ includeCredentials: true }), roots: getRoots() });
 
     await push({ settings: settings({ includeCredentials: false }), roots: getRoots() });
-    const tracked = execFileSync("git", ["ls-files"], { cwd: a.config, encoding: "utf8" });
-    expect(tracked).not.toMatch(/auth\.json/);
+    expect(tracked(a)).not.toMatch(/auth\.json/);
   });
 
   it("reports changes without writing anything in dry-run mode", async () => {
@@ -267,7 +276,7 @@ describe("push and pull", () => {
     expect(dry.changed).toBe(true);
 
     // A dry run must not create a commit; the branch still has no history.
-    const head = git(["rev-parse", "--verify", "HEAD"], { cwd: a.config });
+    const head = git(["rev-parse", "--verify", "HEAD"], { cwd: repo(a) });
     expect(head.ok).toBe(false);
   });
 });
@@ -281,7 +290,7 @@ describe("per-machine overrides", () => {
 
     const b = makeMachine("b");
     useMachine(b);
-    write(path.join(b.config, "opencode-sync.overrides.jsonc"), '{ "model": "local-model" }\n');
+    write(overridesFile(b), '{ "model": "local-model" }\n');
     await pull({ settings: settings(), roots: getRoots() });
 
     // The override wins locally.
@@ -305,13 +314,13 @@ describe("per-machine overrides", () => {
     write(path.join(a.config, "opencode.jsonc"), '{ "model": "shared" }\n');
     await push({ settings: settings(), roots: getRoots() });
 
-    write(path.join(a.config, "opencode-sync.overrides.jsonc"), '{ "model": "mine" }\n');
+    write(overridesFile(a), '{ "model": "mine" }\n');
     write(path.join(a.config, "opencode.jsonc"), '{ "model": "mine" }\n');
     await push({ settings: settings(), roots: getRoots() });
 
     expect(JSON.parse(read(path.join(a.config, "opencode.jsonc"))).model).toBe("mine");
     const committed = execFileSync("git", ["show", "HEAD:opencode.jsonc"], {
-      cwd: a.config,
+      cwd: repo(a),
       encoding: "utf8",
     });
     expect(JSON.parse(committed).model).toBe("shared");
@@ -327,24 +336,25 @@ describe("per-machine overrides", () => {
     expect(read(path.join(a.config, "opencode.jsonc"))).toBe(original);
   });
 
-  it("never commits the overrides file itself", async () => {
+  it("never commits the overrides or settings files", async () => {
     const a = makeMachine("a");
     useMachine(a);
     write(path.join(a.config, "opencode.jsonc"), "{}\n");
+    write(settingsPath(a.config), '{ "repo": {} }\n');
+    write(overridesFile(a), '{ "x": 1 }\n');
+    // Leftover 3.x names in the config folder are never config either.
     write(path.join(a.config, "opencode-sync.overrides.jsonc"), '{ "x": 1 }\n');
     write(path.join(a.config, "opencode-sync.jsonc"), '{ "repo": {} }\n');
     await push({ settings: settings(), roots: getRoots() });
 
-    const tracked = execFileSync("git", ["ls-files"], { cwd: a.config, encoding: "utf8" });
-    expect(tracked).not.toMatch(/opencode-sync\.overrides\.jsonc/);
-    expect(tracked).not.toMatch(/opencode-sync\.jsonc/);
+    const files = tracked(a);
+    expect(files).not.toMatch(/overrides\.jsonc/);
+    expect(files).not.toMatch(/opencode-sync\.jsonc|machine\.jsonc/);
   });
 });
 
 describe("pushing onto remote work", () => {
   const skill = (m: Machine, name: string) => path.join(m.agents, name, "SKILL.md");
-  const tracked = (m: Machine) =>
-    execFileSync("git", ["ls-files"], { cwd: m.config, encoding: "utf8" });
 
   it("writes rebased skills out and never deletes them on the next push", async () => {
     const a = makeMachine("a");
@@ -421,7 +431,7 @@ describe("pushing onto remote work", () => {
 
     // Simulate a push that integrated A's commit but stopped before stage-out.
     useMachine(b);
-    execFileSync("git", ["pull", "--rebase", "origin", "main"], { cwd: b.config, stdio: "pipe" });
+    execFileSync("git", ["pull", "--rebase", "origin", "main"], { cwd: repo(b), stdio: "pipe" });
     expect(fs.existsSync(skill(b, "x"))).toBe(false);
 
     await pull({ settings: settings(), roots: getRoots() });
@@ -454,8 +464,7 @@ describe("extra paths", () => {
     write(path.join(b.config, "command", "b.md"), "b\n");
     await push({ settings: extra, roots: getRoots() });
     expect(fs.existsSync(path.join(homeB, ".tool", "config.json"))).toBe(false);
-    const committed = execFileSync("git", ["ls-files"], { cwd: b.config, encoding: "utf8" });
-    expect(committed).toMatch(/_extra\/tool_config\.json/);
+    expect(tracked(b)).toMatch(/_extra\/tool_config\.json/);
 
     const c = makeMachine("c");
     useMachine(c);
@@ -521,17 +530,17 @@ describe("status", () => {
 
     const b = makeMachine("b");
     useMachine(b);
-    write(path.join(b.config, "opencode-sync.overrides.jsonc"), '{ "model": "mine" }\n');
+    write(overridesFile(b), '{ "model": "mine" }\n');
     await pull({ settings: settings(), roots: getRoots() });
 
-    // git itself still sees a modified file — that is expected.
+    // The live file carries the override; the working copy keeps the shared form.
+    expect(JSON.parse(read(path.join(b.config, "opencode.jsonc"))).model).toBe("mine");
     const porcelain = execFileSync("git", ["status", "--porcelain"], {
-      cwd: b.config,
+      cwd: repo(b),
       encoding: "utf8",
     });
-    expect(porcelain).toMatch(/opencode\.jsonc/);
+    expect(porcelain.trim()).toBe("");
 
-    // But the reported state is clean, because nothing is actually pending.
     expect(status({ settings: settings(), roots: getRoots() }).dirty).toBe(0);
   });
 
@@ -543,7 +552,7 @@ describe("status", () => {
 
     const b = makeMachine("b");
     useMachine(b);
-    write(path.join(b.config, "opencode-sync.overrides.jsonc"), '{ "model": "mine" }\n');
+    write(overridesFile(b), '{ "model": "mine" }\n');
     await pull({ settings: settings(), roots: getRoots() });
 
     // A change to a key the overrides do not claim is genuine pending work.
@@ -573,9 +582,6 @@ describe("status", () => {
 });
 
 describe("OpenCode 2 machine files", () => {
-  const tracked = (root: string): string =>
-    execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8" });
-
   it("never commits the service record, locks or per-machine histories", async () => {
     const a = makeMachine("a");
     useMachine(a);
@@ -589,7 +595,7 @@ describe("OpenCode 2 machine files", () => {
 
     await push({ settings: settings(), roots: getRoots() });
 
-    const files = tracked(a.config);
+    const files = tracked(a);
     expect(files).not.toMatch(/service\.json/);
     expect(files).not.toMatch(/prompt-history|frecency|locks/);
     expect(files).toMatch(/_state\/model\.json/);
@@ -603,15 +609,16 @@ describe("OpenCode 2 machine files", () => {
     await push({ settings: settings(), roots: getRoots() });
     // What 3.2.0 did: the files went in with everything else.
     write(path.join(a.config, "service.json"), '{ "password": "A" }\n');
-    write(path.join(a.config, "_state", "service.json"), '{ "password": "A" }\n');
-    execFileSync("git", ["add", "-f", "service.json", "_state/service.json"], { cwd: a.config });
-    execFileSync("git", ["commit", "-qm", "old version"], { cwd: a.config });
-    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: a.config });
+    write(path.join(repo(a), "service.json"), '{ "password": "A" }\n');
+    write(path.join(repo(a), "_state", "service.json"), '{ "password": "A" }\n');
+    execFileSync("git", ["add", "-f", "service.json", "_state/service.json"], { cwd: repo(a) });
+    execFileSync("git", ["commit", "-qm", "old version"], { cwd: repo(a) });
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repo(a) });
 
     write(path.join(a.config, "command", "x.md"), "x\n");
     await push({ settings: settings(), roots: getRoots() });
 
-    expect(tracked(a.config)).not.toMatch(/service\.json/);
+    expect(tracked(a)).not.toMatch(/service\.json/);
     expect(read(path.join(a.config, "service.json"))).toContain('"A"');
   });
 
@@ -627,10 +634,10 @@ describe("OpenCode 2 machine files", () => {
     write(path.join(b.config, "service.json"), '{ "password": "B" }\n');
 
     useMachine(a);
-    write(path.join(a.config, "service.json"), '{ "password": "A" }\n');
-    execFileSync("git", ["add", "-f", "service.json"], { cwd: a.config });
-    execFileSync("git", ["commit", "-qm", "old version"], { cwd: a.config });
-    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: a.config });
+    write(path.join(repo(a), "service.json"), '{ "password": "A" }\n');
+    execFileSync("git", ["add", "-f", "service.json"], { cwd: repo(a) });
+    execFileSync("git", ["commit", "-qm", "old version"], { cwd: repo(a) });
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repo(a) });
 
     useMachine(b);
     await pull({ settings: settings(), roots: getRoots() });
@@ -648,10 +655,10 @@ describe("OpenCode 2 machine files", () => {
     write(path.join(a.config, "opencode.jsonc"), "{}\n");
     write(path.join(a.state, "model.json"), '{ "m": 1 }\n');
     await push({ settings: settings(), roots: getRoots() });
-    write(path.join(a.config, "_state", "service.json"), '{ "password": "A" }\n');
-    execFileSync("git", ["add", "-f", "_state/service.json"], { cwd: a.config });
-    execFileSync("git", ["commit", "-qm", "old version"], { cwd: a.config });
-    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: a.config });
+    write(path.join(repo(a), "_state", "service.json"), '{ "password": "A" }\n');
+    execFileSync("git", ["add", "-f", "_state/service.json"], { cwd: repo(a) });
+    execFileSync("git", ["commit", "-qm", "old version"], { cwd: repo(a) });
+    execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repo(a) });
 
     const b = makeMachine("b");
     useMachine(b);

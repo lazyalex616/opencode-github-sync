@@ -1,14 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
+import { type CategoryKey, disabledCategories, isDisabledPath } from "./categories.js";
 import {
-  type CategoryKey,
-  type CategorySnapshot,
-  disabledCategories,
-  disabledPathspecs,
-  isDisabledPath,
-  restoreDisabled,
-  snapshotDisabled,
-} from "./categories.js";
+  type Baseline,
+  type ConfigSyncContext,
+  type StageOutMode,
+  configStageIn,
+  configStageOut,
+  pendingConfigChanges,
+} from "./configsync.js";
 import { type BridgePreference, bridgeCredentials } from "./credentials.js";
 import {
   type GitResult,
@@ -21,9 +21,18 @@ import {
 } from "./git.js";
 import { type GuardReport, LargeChangeError, evaluateGuard, writeLocalExcludes } from "./guard.js";
 import { commitMessage, hostAlias } from "./host.js";
-import { applyOverrides, configMatchesRepo, findConfigFile } from "./overrides.js";
-import { type Roots, SESSIONS_DIR, STATE_DIR, getDatabasePath, getRoots } from "./paths.js";
-import { recoveryRoot, saveToRecovery } from "./recovery.js";
+import { effectiveRules, listUnlisted } from "./manifest.js";
+import { ensureMigrated } from "./migrate.js";
+import { loadOverrides } from "./overrides.js";
+import {
+  type Roots,
+  SESSIONS_DIR,
+  STATE_DIR,
+  getDatabasePath,
+  getRoots,
+  repoDir,
+} from "./paths.js";
+import { recoveryRoot } from "./recovery.js";
 import {
   LOCAL_RUNTIME_PATHS,
   type RepoState,
@@ -32,7 +41,6 @@ import {
   ensureRepo,
   excludePathspecs,
   headCommit,
-  holdMachineFiles,
   isLocalRuntimePath,
   readStageOutMark,
   unstageLocalRuntimePaths,
@@ -58,13 +66,7 @@ import {
   repoUrl,
 } from "./settings.js";
 import { sqliteAvailable } from "./sqlite.js";
-import {
-  createStageContext,
-  normalizeConfigForRepo,
-  prunePluginCache,
-  stageIn,
-  stageOut,
-} from "./stage.js";
+import { createStageContext, prunePluginCache, stageIn, stageOut } from "./stage.js";
 
 export interface SyncOptions {
   settings?: Settings;
@@ -137,10 +139,42 @@ interface Context {
   confirmLarge?: SyncOptions["confirmLarge"];
   allowLarge: boolean;
   disabled: CategoryKey[];
+  /** Live config files as this run read them, for a safe write-out. */
+  baseline?: Baseline;
+}
+
+function configCtx(ctx: Context): ConfigSyncContext {
+  return { roots: ctx.roots, repoRoot: ctx.root, settings: ctx.settings, reporter: ctx.reporter };
+}
+
+/** Bring the live config files into the working copy before git runs. */
+function configIn(ctx: Context, mirror: boolean): void {
+  const staged = configStageIn(
+    configCtx(ctx),
+    mirror ? "mirror" : "normal",
+    readStageOutMark(ctx.root),
+  );
+  ctx.baseline = staged.baseline;
+}
+
+/** Write the working copy's config files out to the live folder. */
+function configOut(ctx: Context, mode: StageOutMode, label?: string): void {
+  const result = configStageOut(configCtx(ctx), {
+    mode,
+    baseline: ctx.baseline,
+    mark: readStageOutMark(ctx.root),
+    label,
+  });
+  if (result.written.length + result.deleted.length > 0) {
+    ctx.reporter.detail(
+      `Config: wrote ${result.written.length}, removed ${result.deleted.length} file(s) here`,
+    );
+  }
 }
 
 function prepare(options: SyncOptions): Context {
   const roots = options.roots ?? getRoots();
+  ensureMigrated(roots);
   const settings = options.settings ?? loadSettings(roots.config);
   const remote = repoUrl(settings);
   if (!remote) {
@@ -150,7 +184,7 @@ function prepare(options: SyncOptions): Context {
     );
   }
   return {
-    root: roots.config,
+    root: repoDir(roots),
     branch: repoBranch(settings),
     remote,
     settings,
@@ -176,34 +210,36 @@ export async function push(options: SyncOptions = {}): Promise<SyncResult> {
   const ctx = prepare(options);
   const { root, branch, reporter } = ctx;
 
-  if (!fs.existsSync(root)) throw new SyncError(`Config directory not found: ${root}`);
+  if (!fs.existsSync(ctx.roots.config)) {
+    throw new SyncError(`Config directory not found: ${ctx.roots.config}`);
+  }
+  fs.mkdirSync(root, { recursive: true });
 
-  const restoreMachineFiles = holdMachineFiles(root);
-  try {
-    const state = adoptRepo(ctx, options.adopt ?? "remote", "first-push");
-    if (state === "adopted" && (options.adopt ?? "remote") === "remote" && !ctx.dryRun) {
-      // The remote's files are now in the worktree, but the untracked trees
-      // (skills, state, extra paths) still hold this machine's old contents.
-      // Write the remote's versions out first; staging the stale trees in would
-      // otherwise publish every skill this machine lacks as a deletion.
+  const adopt = options.adopt ?? "remote";
+  const state = adoptRepo(ctx);
+  let mirror = false;
+  if (state === "adopted" && !ctx.dryRun) {
+    if (adopt === "remote") {
+      // The repository's files win the first link. Listed config files are
+      // written out (the replaced ones saved to recovery first), and the
+      // mirrored trees too: staging this machine's old trees in would
+      // otherwise publish every skill it lacks as a deletion.
+      configOut(ctx, "adopt", "first-push");
       stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
       writeStageOutMark(root);
+    } else {
+      // This machine wins: its listed files replace the repository's.
+      mirror = true;
     }
-    assertRemoteReachable(root, branch, "Push", true);
-    writeRepoMetadata(root);
-    writeLocalExcludes(root, ctx.settings.guard?.skipDirs ?? []);
-
-    return await runPush(ctx);
-  } finally {
-    // Staging rewrites the on-disk config into its shareable form. Whatever
-    // happens next — success, conflict, network failure — this machine must be
-    // left with its own effective configuration, not the stripped one.
-    applyOverrides(ctx.roots.config);
-    restoreMachineFiles();
   }
+  assertRemoteReachable(root, branch, "Push", true);
+  writeRepoMetadata(root);
+  writeLocalExcludes(root, ctx.settings.guard?.skipDirs ?? []);
+
+  return await runPush(ctx, mirror);
 }
 
-async function runPush(ctx: Context): Promise<SyncResult> {
+async function runPush(ctx: Context, mirror = false): Promise<SyncResult> {
   const { root, branch, reporter } = ctx;
 
   // A previous run that integrated remote commits but stopped before writing
@@ -214,12 +250,14 @@ async function runPush(ctx: Context): Promise<SyncResult> {
   const head = headCommit(root);
   if (!ctx.dryRun && mark && head && mark !== head) {
     reporter.step("Writing out changes from an earlier sync");
+    configOut(ctx, "lagging");
     stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
     writeStageOutMark(root);
   }
 
   reporter.step("Staging local files");
   await bridge(ctx, "database");
+  configIn(ctx, mirror || ctx.force);
   stageIn(createStageContext(root, ctx.settings, reporter, ctx.force, ctx.roots));
 
   const sessions = await maybeExportSessions(ctx);
@@ -228,7 +266,6 @@ async function runPush(ctx: Context): Promise<SyncResult> {
   unstageLocalRuntimePaths(root);
   untrackMachineFiles(root);
   untrackPolicyDisabled(ctx);
-  unstageDisabled(ctx);
 
   const staged = git(["diff", "--cached", "--name-status"], { cwd: root });
   const files = toChangedFiles(staged, true);
@@ -269,13 +306,7 @@ async function runPush(ctx: Context): Promise<SyncResult> {
       // anything — and the result must reach the real directories, or the next
       // push would read everything new as deleted on this machine.
       reporter.step(`Fast-forwarding ${behind} remote commit(s)`);
-      const aside = setAsideDisabled(ctx);
-      let ff: GitResult;
-      try {
-        ff = git(["merge", "--ff-only", `origin/${branch}`], { cwd: root });
-      } finally {
-        restoreDisabled(root, ctx.disabled, aside);
-      }
+      const ff = git(["merge", "--ff-only", `origin/${branch}`], { cwd: root });
       if (!ff.ok) throw toGitError("Fast-forward", ff);
       await finishPush(ctx, true);
       return done(
@@ -357,6 +388,7 @@ async function runPush(ctx: Context): Promise<SyncResult> {
 async function finishPush(ctx: Context, integrated: boolean): Promise<void> {
   if (integrated) {
     ctx.reporter.step("Writing out changes from other machines");
+    configOut(ctx, "normal");
     stageOut(createStageContext(ctx.root, ctx.settings, ctx.reporter, false, ctx.roots));
     await bridge(ctx, "file");
     await maybeImportSessions(ctx);
@@ -462,30 +494,23 @@ function pushBranch(ctx: Context): boolean {
 
   // Another machine can publish between our rebase and our push. Losing that
   // race is contention, not failure: rebase onto the newcomer and try again.
-  // Files in disabled categories are set aside so local-only edits never
-  // block the rebase.
-  const aside = setAsideDisabled(ctx);
   let integrated = false;
-  try {
-    for (let attempt = 1; ; attempt++) {
-      const before = headCommit(root);
-      integrateRemote(root, branch, reporter);
-      // The rebase moves HEAD only when it replayed local commits onto new
-      // remote ones; an unchanged HEAD means nothing arrived.
-      if (headCommit(root) !== before) integrated = true;
+  for (let attempt = 1; ; attempt++) {
+    const before = headCommit(root);
+    integrateRemote(root, branch, reporter);
+    // The rebase moves HEAD only when it replayed local commits onto new
+    // remote ones; an unchanged HEAD means nothing arrived.
+    if (headCommit(root) !== before) integrated = true;
 
-      const result = git(["push", "origin", branch], { cwd: root });
-      if (result.ok) break;
-      if (!isRejected(result)) throw toGitError("Push", result);
-      if (attempt >= PUSH_RACE_RETRIES) {
-        throw new PushRaceError(
-          `Another machine kept publishing first (${attempt} attempts). The next sync will retry.`,
-        );
-      }
-      reporter.step("Another machine pushed first; rebasing and retrying");
+    const result = git(["push", "origin", branch], { cwd: root });
+    if (result.ok) break;
+    if (!isRejected(result)) throw toGitError("Push", result);
+    if (attempt >= PUSH_RACE_RETRIES) {
+      throw new PushRaceError(
+        `Another machine kept publishing first (${attempt} attempts). The next sync will retry.`,
+      );
     }
-  } finally {
-    restoreDisabled(root, ctx.disabled, aside);
+    reporter.step("Another machine pushed first; rebasing and retrying");
   }
   assertPushLanded(root, branch, "Push");
   return integrated;
@@ -526,7 +551,7 @@ function isRejected(result: GitResult): boolean {
  * never touched.
  */
 function untrackPolicyDisabled(ctx: Context): void {
-  const policy = loadPolicy(ctx.root);
+  const policy = loadPolicy(ctx.roots.config);
   const specs: string[] = [];
   if (policy.includeState === false && !ctx.settings.includeState) {
     specs.push(`:(top,literal)${STATE_DIR}`);
@@ -538,46 +563,19 @@ function untrackPolicyDisabled(ctx: Context): void {
   git(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...specs], { cwd: ctx.root });
 }
 
-function unstageDisabled(ctx: Context): void {
-  if (ctx.disabled.length === 0) return;
-  git(["reset", "-q", "--", ...disabledPathspecs(ctx.disabled)], { cwd: ctx.root });
-}
-
-/**
- * Copy the disabled categories aside and bring their tracked files back to
- * HEAD, so a rebase or reset can run on a clean tree. `restoreDisabled` puts
- * the local versions back afterwards.
- */
-function setAsideDisabled(ctx: Context): CategorySnapshot | null {
-  if (ctx.disabled.length === 0) return null;
-  const snapshot = snapshotDisabled(ctx.root, ctx.disabled);
-  if (!snapshot) return null;
-  // Untracked local-only files would block an incoming file at the same path.
-  for (const rel of snapshot.files) fs.rmSync(path.join(ctx.root, rel), { force: true });
-  const tracked = git(["ls-files", "--", ...disabledPathspecs(ctx.disabled)], { cwd: ctx.root });
-  const files = tracked.ok ? tracked.stdout.split("\n").filter(Boolean) : [];
-  if (files.length > 0) git(["checkout", "HEAD", "--", ...files], { cwd: ctx.root });
-  return snapshot;
-}
-
 // ── Pull ────────────────────────────────────────────────────────────────────
 
 export async function pull(options: SyncOptions = {}): Promise<SyncResult> {
   const ctx = prepare(options);
   fs.mkdirSync(ctx.root, { recursive: true });
-  const restoreMachineFiles = holdMachineFiles(ctx.root);
-  try {
-    return await runPull(ctx);
-  } finally {
-    restoreMachineFiles();
-  }
+  return await runPull(ctx);
 }
 
 async function runPull(ctx: Context): Promise<SyncResult> {
   const { root, branch, reporter, force } = ctx;
 
   if (!isGitRepo(root)) {
-    const state = adoptRepo(ctx, "remote", "first-pull");
+    const state = adoptRepo(ctx);
     if (state === "fresh") {
       return done(
         "pull",
@@ -587,6 +585,7 @@ async function runPull(ctx: Context): Promise<SyncResult> {
         "The sync repository is empty — push from another machine first.",
       );
     }
+    configOut(ctx, force ? "force" : "adopt", "first-pull");
     stageOut(createStageContext(root, ctx.settings, reporter, force, ctx.roots));
     await bridge(ctx, "file");
     const sessions = await maybeImportSessions(ctx);
@@ -619,16 +618,14 @@ async function runPull(ctx: Context): Promise<SyncResult> {
 
   const behind = countCommits(root, `HEAD..origin/${branch}`);
   if (!force && behind === 0) {
-    // Nothing incoming, so the worktree does not need to be touched at all.
-    // Skipping the stash cycle here is what keeps a no-op pull fast on Windows.
-    //
-    // HEAD can still be ahead of what was last written out, when a push
-    // integrated remote commits and stopped before writing them. Settle that
-    // here; without a recorded mark nothing is known, so nothing is written.
+    // Nothing incoming. HEAD can still be ahead of what was last written out,
+    // when a push integrated remote commits and stopped before writing them.
+    // Settle that here; without a recorded mark nothing is known.
     const mark = readStageOutMark(root);
     const head = headCommit(root);
     if (!ctx.dryRun && mark && head && mark !== head) {
       reporter.step("Writing out changes from an earlier sync");
+      configOut(ctx, "lagging");
       stageOut(createStageContext(root, ctx.settings, reporter, false, ctx.roots));
       await bridge(ctx, "file");
       const sessions = await maybeImportSessions(ctx);
@@ -646,45 +643,35 @@ async function runPull(ctx: Context): Promise<SyncResult> {
     return done("pull", false, emptySummary(), [], "Already up to date", undefined, false);
   }
 
-  const stageCtx = createStageContext(root, ctx.settings, reporter, force, ctx.roots);
-  // The config file on disk carries this machine's overrides, so it always
-  // differs from HEAD. Rewinding it to the committed form first means the
-  // worktree is clean and the pull never has to stash-and-merge the one file
-  // that would conflict on every single run.
-  normalizeConfigForRepo(stageCtx);
+  // Local config edits go into the working copy first, so the stash below
+  // carries them across the reset exactly like 3.x carried worktree edits.
+  if (!ctx.dryRun) configIn(ctx, false);
 
-  if (force && !ctx.dryRun) saveOverwritten(ctx, `origin/${branch}`, "force-pull");
-  const aside = ctx.dryRun ? null : setAsideDisabled(ctx);
-  let stashed = false;
   let files: ChangedFile[] = [];
   let summary = emptySummary();
-  try {
-    stashed = prepareWorktree(ctx);
-    const nameStatus = git(["diff", "--name-status", "HEAD", `origin/${branch}`], { cwd: root });
-    files = toChangedFiles(nameStatus, true).filter((f) => !isDisabledPath(f.path, ctx.disabled));
-    summary = summarize(files);
+  const stashed = ctx.dryRun ? false : prepareWorktree(ctx);
+  const nameStatus = git(["diff", "--name-status", "HEAD", `origin/${branch}`], { cwd: root });
+  files = toChangedFiles(nameStatus, true).filter((f) => !isDisabledPath(f.path, ctx.disabled));
+  summary = summarize(files);
 
-    if (ctx.dryRun) {
-      if (stashed) restoreStash(ctx);
-      return done(
-        "pull",
-        files.length > 0,
-        summary,
-        files,
-        `${totalChanges(summary)} change(s) would be pulled`,
-      );
-    }
-
-    const reset = git(["reset", "--hard", `origin/${branch}`], { cwd: root });
-    if (!reset.ok) {
-      if (stashed) restoreStash(ctx);
-      throw toGitError("Reset", reset);
-    }
-    if (stashed) restoreStash(ctx);
-  } finally {
-    restoreDisabled(root, ctx.disabled, aside);
+  if (ctx.dryRun) {
+    return done(
+      "pull",
+      files.length > 0,
+      summary,
+      files,
+      `${totalChanges(summary)} change(s) would be pulled`,
+    );
   }
 
+  const reset = git(["reset", "--hard", `origin/${branch}`], { cwd: root });
+  if (!reset.ok) {
+    if (stashed) restoreStash(ctx);
+    throw toGitError("Reset", reset);
+  }
+  if (stashed) restoreStash(ctx);
+
+  configOut(ctx, force ? "force" : "normal", "force-pull");
   stageOut(createStageContext(root, ctx.settings, reporter, force, ctx.roots));
   await bridge(ctx, "file");
   const sessions = await maybeImportSessions(ctx);
@@ -702,12 +689,9 @@ async function runPull(ctx: Context): Promise<SyncResult> {
   );
 }
 
-/** Re-apply machine-local settings and clean up caches after a pull. */
+/** Record the write-out and clean up caches after a pull. */
 function finishPull(ctx: Context): void {
   writeStageOutMark(ctx.root);
-  if (applyOverrides(ctx.roots.config)) {
-    ctx.reporter.detail("Re-applied per-machine overrides");
-  }
   const pruned = prunePluginCache(ctx.roots.config, ctx.roots.cache);
   if (pruned > 0) ctx.reporter.detail(`Removed ${pruned} stale plugin package(s) from the cache`);
 }
@@ -879,14 +863,17 @@ export interface StatusResult {
   sessionShards: number;
   overridesActive: boolean;
   machineAlias: string;
+  /** Root entries of the config folder that no manifest rule mentions. */
+  unlisted: string[];
 }
 
 export function status(options: SyncOptions = {}): StatusResult {
   const roots = options.roots ?? getRoots();
+  ensureMigrated(roots);
   const settings = options.settings ?? loadSettings(roots.config);
   const branch = repoBranch(settings);
   const remote = repoUrl(settings);
-  const root = roots.config;
+  const root = repoDir(roots);
 
   const base: StatusResult = {
     configured: Boolean(remote),
@@ -898,8 +885,13 @@ export function status(options: SyncOptions = {}): StatusResult {
     dirty: 0,
     sessionsEnabled: settings.sessions.enabled,
     sessionShards: countShards(root),
-    overridesActive: fs.existsSync(path.join(root, "opencode-sync.overrides.jsonc")),
+    overridesActive: Object.keys(loadOverrides(roots.config)).length > 0,
     machineAlias: hostAlias(settings.machineAlias),
+    unlisted: listUnlisted(
+      roots.config,
+      effectiveRules(root, settings),
+      settings.guard?.skipDirs ?? [],
+    ),
   };
 
   if (!remote || !isGitRepo(root)) return base;
@@ -909,8 +901,14 @@ export function status(options: SyncOptions = {}): StatusResult {
   base.ahead = countCommits(root, `origin/${branch}..HEAD`);
   base.behind = countCommits(root, `HEAD..origin/${branch}`);
 
+  // Pending work is what a push would publish: listed config files that
+  // differ from the working copy, plus anything uncommitted in it.
   const dirty = git(["status", "--porcelain", "--", ".", ...excludePathspecs()], { cwd: root });
-  base.dirty = dirty.ok ? countRealChanges(root, dirty.stdout) : 0;
+  const changed = new Set([
+    ...(dirty.ok ? parsePorcelainPaths(dirty.stdout) : []),
+    ...pendingConfigChanges({ roots, repoRoot: root, settings }),
+  ]);
+  base.dirty = changed.size;
 
   const log = git(["log", "-1", "--format=%s%n%cI"], { cwd: root });
   if (log.ok) {
@@ -927,84 +925,15 @@ function countShards(root: string): number {
   return fs.readdirSync(dir).filter((f) => f.endsWith(".json.gz")).length;
 }
 
-/**
- * Count genuinely uncommitted files.
- *
- * With overrides in use the config file always differs from the committed
- * version, so a raw `git status` would report one modified file forever. That
- * entry is dropped when the only difference is the overrides themselves.
- */
-function countRealChanges(root: string, porcelain: string): number {
-  const paths = parsePorcelainPaths(porcelain);
-  if (paths.length === 0) return 0;
-
-  const configFile = findConfigFile(root);
-  if (!configFile) return paths.length;
-
-  const relative = path.relative(root, configFile).split(path.sep).join("/");
-  const head = git(["show", `HEAD:${relative}`], { cwd: root });
-  if (!configMatchesRepo(root, head.ok ? head.stdout : undefined)) return paths.length;
-
-  return paths.filter((file) => file !== relative).length;
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Make the config directory a working copy of the remote.
- *
- * When the remote already has history and `mode` is `remote`, the files it
- * is about to overwrite are copied to recovery first, and files in disabled
- * categories are set aside and put back, so they stay this machine's own.
+ * Make the tool's working copy a clone of the remote. The working copy holds
+ * nothing of the user's, so adopting the remote never overwrites user bytes
+ * here; the config folder is written separately, with recovery copies.
  */
-function adoptRepo(ctx: Context, mode: "remote" | "local", label: string): RepoState {
-  let aside: CategorySnapshot | null = null;
-  try {
-    return ensureRepo({
-      root: ctx.root,
-      remote: ctx.remote,
-      branch: ctx.branch,
-      adopt: mode,
-      beforeAdopt: (_root, ref) => {
-        saveOverwritten(ctx, ref, label);
-        aside = snapshotDisabled(ctx.root, ctx.disabled);
-      },
-    });
-  } finally {
-    restoreDisabled(ctx.root, ctx.disabled, aside);
-  }
-}
-
-/**
- * Copy every local file that a move to `ref` would overwrite or delete into
- * the recovery folder. Called before a forced pull and before a first link
- * adopts the remote, the two moments local bytes are replaced wholesale.
- */
-function saveOverwritten(ctx: Context, ref: string, label: string): string | undefined {
-  const { root } = ctx;
-  const candidates = new Set<string>();
-  const hasHead = git(["rev-parse", "--verify", "HEAD"], { cwd: root }).ok;
-  if (hasHead) {
-    const diff = git(["diff", "-z", "--name-only", "HEAD", ref], { cwd: root });
-    for (const p of diff.ok ? diff.stdout.split("\0") : []) if (p) candidates.add(p);
-    // `--untracked-files=all` lists each file in a new folder; the default
-    // reports the folder alone, which is not a file and would be skipped
-    // right before `git clean` deletes it.
-    const dirty = git(
-      ["status", "-z", "--porcelain", "--untracked-files=all", "--", ".", ...excludePathspecs()],
-      { cwd: root },
-    );
-    for (const p of parsePorcelainZ(dirty.ok ? dirty.stdout : "")) candidates.add(p);
-  } else {
-    const files = git(["ls-tree", "-z", "-r", "--name-only", ref], { cwd: root });
-    for (const p of files.ok ? files.stdout.split("\0") : []) if (p) candidates.add(p);
-  }
-  const entries = [...candidates]
-    .filter((rel) => !isLocalRuntimePath(rel))
-    .map((rel) => ({ source: path.join(root, rel), rel }));
-  const dir = saveToRecovery(ctx.roots, label, entries);
-  if (dir) ctx.reporter.detail(`Saved the replaced local files to ${dir}`);
-  return dir;
+function adoptRepo(ctx: Context): RepoState {
+  return ensureRepo({ root: ctx.root, remote: ctx.remote, branch: ctx.branch, adopt: "remote" });
 }
 
 function countCommits(root: string, range: string): number {

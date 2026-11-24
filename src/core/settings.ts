@@ -1,17 +1,27 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseJsonc } from "./jsonc.js";
-import { getConfigRoot } from "./paths.js";
+import { getConfigRoot, repoDirFor, toolRootFor } from "./paths.js";
 
-/** Filename of the tool's own settings (local-only, never committed). */
-export const SETTINGS_FILE = "opencode-sync.jsonc";
-/** Filename of the per-machine OpenCode config patch (local-only). */
-export const OVERRIDES_FILE = "opencode-sync.overrides.jsonc";
 /**
- * Filename of the shared sync policy. Unlike the settings file it IS
- * committed, so every machine reads the same intended scope (#14). It may
- * only set the keys in `POLICY_KEYS`; machine identity (repository, alias,
- * proxy, language), autosync timing and credential sync stay per machine.
+ * This machine's settings (never shared). Since 4.0 it lives in the tool's
+ * own home, `~/.config/opencode-sync/machine.jsonc`, outside the directory
+ * OpenCode reads and outside the git working copy.
+ */
+export const SETTINGS_FILE = "machine.jsonc";
+/** The per-machine OpenCode config patch, in the tool's home. */
+export const OVERRIDES_FILE = "overrides.jsonc";
+/** Runtime bookkeeping written by the tool itself, in the tool's home. */
+export const RUNTIME_FILE = "state.json";
+/** 3.x file names inside `~/.config/opencode`, read only by the migration. */
+export const LEGACY_SETTINGS_FILE = "opencode-sync.jsonc";
+export const LEGACY_OVERRIDES_FILE = "opencode-sync.overrides.jsonc";
+/**
+ * Filename of the shared sync policy, at the root of the working copy. Unlike
+ * the machine file it IS committed, so every machine reads the same intended
+ * scope (#14). It may only set the keys in `POLICY_KEYS`; machine identity
+ * (repository, alias, proxy, language), autosync timing and credential sync
+ * stay per machine.
  */
 export const POLICY_FILE = "opencode-sync.policy.jsonc";
 
@@ -146,6 +156,11 @@ export interface Settings {
   notifications: boolean;
   /** Downloaded skills come from their upstream instead of the repository. */
   upstreamSkills: UpstreamSkillsSettings;
+  /**
+   * Extra manifest lines for this machine only (`+path` / `-path`), applied
+   * after the shared `opencode-sync.manifest`.
+   */
+  manifest: string[];
 }
 
 /**
@@ -200,16 +215,49 @@ export const DEFAULT_SETTINGS: Settings = {
   language: "",
   notifications: true,
   upstreamSkills: { enabled: false, updateHours: 24 },
+  manifest: [],
 };
 
 export const MIN_AUTOSYNC_INTERVAL = 2;
 
 export function settingsPath(configRoot = getConfigRoot()): string {
-  return path.join(configRoot, SETTINGS_FILE);
+  return path.join(toolRootFor(configRoot), SETTINGS_FILE);
 }
 
 export function overridesPath(configRoot = getConfigRoot()): string {
-  return path.join(configRoot, OVERRIDES_FILE);
+  return path.join(toolRootFor(configRoot), OVERRIDES_FILE);
+}
+
+/** Runtime bookkeeping (autosync state and the pause), written by the tool. */
+export function runtimePath(configRoot = getConfigRoot()): string {
+  return path.join(toolRootFor(configRoot), RUNTIME_FILE);
+}
+
+export function readRuntime(configRoot = getConfigRoot()): Record<string, any> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(runtimePath(configRoot), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Merge `patch` into the runtime file, atomically. Best effort. */
+export function writeRuntime(
+  configRoot: string,
+  patch: Record<string, unknown>,
+): Record<string, any> {
+  const next = { ...readRuntime(configRoot), ...patch };
+  try {
+    const file = runtimePath(configRoot);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
+    fs.renameSync(tmp, file);
+  } catch {
+    // Losing bookkeeping costs one extra attempt, nothing more.
+  }
+  return next;
 }
 
 function mergeSettings(base: Settings, patch: Partial<Settings>): Settings {
@@ -231,7 +279,7 @@ export function defaultSettings(): Settings {
 }
 
 export function policyPath(configRoot = getConfigRoot()): string {
-  return path.join(configRoot, POLICY_FILE);
+  return path.join(repoDirFor(configRoot), POLICY_FILE);
 }
 
 function getPath(obj: any, key: string): unknown {
@@ -281,20 +329,25 @@ export function loadPolicy(configRoot = getConfigRoot()): Partial<Settings> {
 
 /**
  * Effective settings: defaults, then the shared policy, then this machine's
- * own file. A value set locally always wins, so a machine can opt out of any
- * part of the policy.
+ * own file, then the pause recorded in the runtime file. A value set locally
+ * always wins, so a machine can opt out of any part of the policy.
  */
 export function loadSettings(configRoot = getConfigRoot()): Settings {
   const withPolicy = mergeSettings(defaultSettings(), loadPolicy(configRoot));
   const file = settingsPath(configRoot);
-  if (!fs.existsSync(file)) return withPolicy;
-  let parsed: Partial<Settings>;
-  try {
-    parsed = parseJsonc<Partial<Settings>>(fs.readFileSync(file, "utf8"));
-  } catch (e) {
-    throw new Error(`Cannot read ${SETTINGS_FILE}: ${(e as Error).message}`);
+  let settings = withPolicy;
+  if (fs.existsSync(file)) {
+    let parsed: Partial<Settings>;
+    try {
+      parsed = parseJsonc<Partial<Settings>>(fs.readFileSync(file, "utf8"));
+    } catch (e) {
+      throw new Error(`Cannot read ${file}: ${(e as Error).message}`);
+    }
+    settings = mergeSettings(withPolicy, parsed ?? {});
   }
-  return mergeSettings(withPolicy, parsed ?? {});
+  const paused = Number(readRuntime(configRoot).pausedUntil);
+  settings.autosync.pausedUntil = Number.isFinite(paused) && paused > 0 ? paused : 0;
+  return settings;
 }
 
 /** Load, change and save in one step. Returns the saved settings. */
@@ -311,10 +364,12 @@ export function updateSettings(
 /**
  * Save this machine's settings. A value equal to the shared policy is not
  * written, so the machine keeps following the policy when it changes later;
- * only a deliberate local difference is stored (#14).
+ * only a deliberate local difference is stored (#14). The pause is runtime
+ * state and goes to the runtime file instead.
  */
 export function saveSettings(settings: Settings, configRoot = getConfigRoot()): void {
-  fs.mkdirSync(configRoot, { recursive: true });
+  const file = settingsPath(configRoot);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const policy = loadPolicy(configRoot);
   const out: Settings = JSON.parse(JSON.stringify(settings));
   for (const key of POLICY_KEYS) {
@@ -323,7 +378,12 @@ export function saveSettings(settings: Settings, configRoot = getConfigRoot()): 
       deletePath(out, key);
     }
   }
-  fs.writeFileSync(settingsPath(configRoot), `${JSON.stringify(out, null, 2)}\n`);
+  const paused = out.autosync?.pausedUntil ?? 0;
+  if (out.autosync) delete (out.autosync as Partial<AutosyncSettings>).pausedUntil;
+  if (paused !== Number(readRuntime(configRoot).pausedUntil ?? 0)) {
+    writeRuntime(configRoot, { pausedUntil: paused });
+  }
+  fs.writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
 }
 
 export function repoUrl(settings: Settings): string | undefined {

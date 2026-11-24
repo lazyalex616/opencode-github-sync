@@ -32,6 +32,14 @@
 
 ---
 
+> **4.0 preview (`4.0.0-beta.x`, npm tag `next`).** This README describes 4.0,
+> which moves the git working copy out of `~/.config/opencode` and syncs only
+> the files a manifest lists. It is a preview for testing. The stable release
+> is 3.4 (`npm install -g opencode-github-sync`); its README is on the
+> [`main` branch](https://github.com/lazyalex616/opencode-github-sync/tree/main).
+> To try 4.0: `npm install -g opencode-github-sync@next`. See
+> [Upgrading to 4.0](#upgrading-to-40-preview) for what changes and how to go back.
+
 You use OpenCode on more than one computer, and every machine drifts: a new
 agent here, an MCP server there, a skill you installed on the laptop and forgot
 on the desktop.
@@ -173,12 +181,15 @@ turning it on here never turns it on anywhere else.
   <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/en/02-how-it-works.png" alt="Each machine pushes and pulls through one private repository" width="760">
 </p>
 
-Your `~/.config/opencode` folder becomes a working copy of the repository.
-Everything that lives elsewhere is mirrored into a folder inside it.
+The repository is cloned into `~/.config/opencode-sync/repo`, a folder the
+tool owns. `~/.config/opencode` itself is never a git repository: before each
+sync the files the [manifest](#manifest) lists are copied into the working
+copy, and afterwards the result is copied back. Everything that lives
+elsewhere is mirrored into a folder inside the working copy.
 
 | On your machine | In the repository | What it holds |
 | --- | --- | --- |
-| `~/.config/opencode/` | the root | `opencode.json(c)`, `tui.json(c)`, OpenCode 2's `cli.json`, agents, commands, plugins, themes, instruction files |
+| `~/.config/opencode/` (listed files) | the root | `opencode.json(c)`, `tui.json(c)`, OpenCode 2's `cli.json`, agents, commands, plugins, tools, modes, themes, instruction files |
 | `~/.local/share/opencode/` | `_data/` | project metadata; logins if you [opt in](#credentials) |
 | `~/.local/state/opencode/` | `_state/` | model cache and other interface state |
 | `~/.agents/skills/` | `_agents/` | skills installed with the `skills` CLI |
@@ -191,15 +202,43 @@ versions do not replace yours.
 
 **Never synced**
 
+- Any file in `~/.config/opencode` the manifest does not list. A helper script
+  you drop there, or a file a new OpenCode release starts writing, stays on
+  this machine until you add it.
 - The `opencode.db` database itself, tool output, snapshots and logs. Sessions
   travel as separate small files instead.
 - `node_modules` and other generated folders.
-- opencode-sync's own settings and overrides files.
+- opencode-sync's own files in `~/.config/opencode-sync` (settings, overrides,
+  runtime state, logs).
 - Anything that describes one machine rather than your setup: OpenCode 2's
   `service.json` (one in the config folder and one in the state folder; each
   holds the local background service's password), lock files, prompt history,
   recent-file lists, and `cli.json` plugin entries that point into this
   machine's home folder.
+
+### Manifest
+
+`opencode-sync.manifest` at the root of the repository lists what is shared
+from `~/.config/opencode`. Without it a built-in default applies: the files
+and folders OpenCode itself reads. One rule per line, the last matching rule
+wins, every pattern starts at the folder's root:
+
+```text
++opencode.jsonc     a file
++*.md               instruction files at the root only
++agents/            a folder and everything in it
+-agents/scratch/    take part of it back out
++scripts/**/*.sh    ** crosses folders
+```
+
+```bash
+opencode-sync manifest                    # rules in force, and what is not synced
+opencode-sync manifest add scripts/       # share it with every machine
+opencode-sync manifest exclude agents/x/  # stop sharing it everywhere
+opencode-sync manifest local-add notes/   # this machine only
+```
+
+`opencode-sync status` shows how many entries in the folder are not synced.
 
 ---
 
@@ -276,7 +315,7 @@ compete; it still pulls when OpenCode starts.
 
 Some settings belong to one machine only: a work proxy, a local tool path, an
 MCP server that only exists on one box. Put them in
-`~/.config/opencode/opencode-sync.overrides.jsonc`, or use **This machine's
+`~/.config/opencode-sync/overrides.jsonc`, or use **This machine's
 overrides** in the menu:
 
 ```jsonc
@@ -528,8 +567,9 @@ a configuration that stops OpenCode from loading it; `opencode-sync pull
 
 ## Settings file
 
-`~/.config/opencode/opencode-sync.jsonc` stays on this machine and is never
-committed. The menu edits it for you; every key is optional.
+`~/.config/opencode-sync/machine.jsonc` stays on this machine and is never
+committed. The menu edits it for you; every key is optional. The autosync
+pause and bookkeeping live next to it in `state.json`, written by the tool.
 
 ```jsonc
 {
@@ -565,10 +605,12 @@ committed. The menu edits it for you; every key is optional.
 | `guard` | [Large-change guard](#safety) limits |
 | `autoPullOnStartup` / `autoPushOnIdle` | What the [plugin](#opencode-plugin) does |
 | `upstreamSkills` | `{ "enabled": false, "updateHours": 24 }`: install downloaded skills from upstream instead of the repository (below) |
+| `manifest` | Extra [manifest](#manifest) lines for this machine only, such as `["+notes/"]` |
 
 ### Shared policy
 
-`~/.config/opencode/opencode-sync.policy.jsonc` is the one settings file that
+`opencode-sync.policy.jsonc` at the root of the repository (in
+`~/.config/opencode-sync/repo`) is the one settings file that
 **is** committed, so every machine reads the same intended scope. It may set
 `includeSkills`, `includeState`, `extraPaths`, `categories`, `sessions`,
 `guard` and `upstreamSkills`; anything else in it (repository, alias, proxy,
@@ -669,6 +711,38 @@ The files it replaces go to the recovery folder first.
 ---
 
 ## Upgrading
+
+### Upgrading to 4.0 (preview)
+
+```bash
+npm install -g opencode-github-sync@next
+```
+
+The first command you run (or OpenCode starting with the plugin) upgrades the
+machine once, automatically:
+
+- `~/.config/opencode/.git` and the mirror folders (`_agents`, `_state`, ...)
+  move to `~/.config/opencode-sync/repo`. Nothing is copied; on the same disk
+  it is a rename.
+- `opencode-sync.jsonc` becomes `~/.config/opencode-sync/machine.jsonc`, the
+  overrides file becomes `~/.config/opencode-sync/overrides.jsonc`. The old
+  files, and the tool's own `.gitignore` / `.gitattributes`, go to the
+  recovery folder.
+- If the repository shared a root file or folder the default manifest does
+  not list (a `scripts/` folder, say), a manifest that keeps sharing it is
+  written, so upgrading never quietly stops syncing anything.
+- Your OpenCode config files are not touched. If any step fails, everything is
+  put back and the command stops with the reason.
+
+3.4 and 4.0 machines can share a repository while you upgrade them one by one:
+the repository format is the same. A 3.4 machine receives the manifest as an
+ordinary file and ignores it.
+
+**Going back to 3.4.** `npm install -g opencode-github-sync@latest`, then move
+`~/.config/opencode-sync/repo/.git` back to `~/.config/opencode/.git` and copy
+`~/.config/opencode-sync/machine.jsonc` to
+`~/.config/opencode/opencode-sync.jsonc` (and `overrides.jsonc` to
+`opencode-sync.overrides.jsonc`). The next 3.4 sync carries on from there.
 
 ### Upgrading to OpenCode 2
 

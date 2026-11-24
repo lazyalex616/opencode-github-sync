@@ -32,6 +32,8 @@
 
 ---
 
+> **4.0 预览版（`4.0.0-beta.x`，npm 标签 `next`）。** 这份 README 讲的是 4.0：git 工作副本搬出了 `~/.config/opencode`，并且只同步清单里列出的文件。它是给人试用的预览版。稳定版是 3.4（`npm install -g opencode-github-sync`），它的说明在 [`main` 分支](https://github.com/lazyalex616/opencode-github-sync/tree/main)。想试 4.0：`npm install -g opencode-github-sync@next`。改了什么、怎么退回，见[升级到 4.0（预览版）](#升级到-40预览版)。
+
 你在好几台电脑上用 OpenCode，每台都会慢慢变得不一样：这台加了个智能体，那台多了个 MCP 服务器，笔记本上装的技能台式机上又忘了装。
 
 **opencode-github-sync** 借助一个 GitHub 私有仓库，让所有电脑保持同一套配置。想手动同步就手动，也可以让每天用的电脑在后台自己同步。OpenCode 1 和 OpenCode 2 都支持，两种版本的电脑还能共用同一个仓库。
@@ -157,11 +159,11 @@ Windows 上参数名相同，前面换成一个短横线：`-Mode`、`-Repo`、`
   <img src="https://raw.githubusercontent.com/lazyalex616/opencode-github-sync/main/docs/images/zh-CN/02-how-it-works.png" alt="每台电脑都通过同一个私有仓库推送和拉取" width="760">
 </p>
 
-`~/.config/opencode` 文件夹本身就是仓库的工作目录，其他位置的内容会镜像到仓库里的子文件夹。
+仓库克隆在 `~/.config/opencode-sync/repo`，这个文件夹归工具自己管。`~/.config/opencode` 本身不再是 git 仓库：每次同步前，[清单](#同步清单)里列出的文件会被复制进工作副本，同步后再把结果复制回来。其他位置的内容会镜像到工作副本里的子文件夹。
 
 | 本机位置 | 仓库里的位置 | 内容 |
 | --- | --- | --- |
-| `~/.config/opencode/` | 根目录 | `opencode.json(c)`、`tui.json(c)`、OpenCode 2 的 `cli.json`、智能体、自定义命令、插件、主题、指令文件 |
+| `~/.config/opencode/`（清单里的文件） | 根目录 | `opencode.json(c)`、`tui.json(c)`、OpenCode 2 的 `cli.json`、智能体、自定义命令、插件、工具、模式、主题、指令文件 |
 | `~/.local/share/opencode/` | `_data/` | 项目信息；[开启后](#登录凭据)还有登录凭据 |
 | `~/.local/state/opencode/` | `_state/` | 模型缓存等界面状态 |
 | `~/.agents/skills/` | `_agents/` | 用 `skills` 命令安装的技能 |
@@ -172,10 +174,32 @@ Windows 上参数名相同，前面换成一个短横线：`-Mode`、`-Repo`、`
 
 **永远不同步**
 
+- `~/.config/opencode` 里清单没列出的文件。你随手放进去的脚本，或者 OpenCode 新版本开始写的新文件，在你加进清单之前都只留在本机。
 - `opencode.db` 数据库本身、工具输出、快照和日志。会话改为单独导出成小文件同步。
 - `node_modules` 之类的生成目录。
-- opencode-sync 自己的设置文件和专属设置文件。
+- opencode-sync 自己放在 `~/.config/opencode-sync` 里的文件（设置、专属设置、运行状态、日志）。
 - 只描述某一台电脑、而不是你的配置的东西：OpenCode 2 的 `service.json`（配置目录和状态目录里各一份，里面都有本机后台服务的密码）、锁文件、输入历史、最近文件列表，以及 `cli.json` 里指向本机用户目录的插件条目。
+
+### 同步清单
+
+仓库根目录的 `opencode-sync.manifest` 列出 `~/.config/opencode` 里要共享的内容。没有这个文件时用内置默认清单，也就是 OpenCode 自己会读的那些文件和文件夹。一行一条规则，最后匹配的那条说了算，所有路径都从文件夹根目录算起：
+
+```text
++opencode.jsonc     一个文件
++*.md               只算根目录下的指令文件
++agents/            一个文件夹及里面的全部内容
+-agents/scratch/    再把其中一部分排除掉
++scripts/**/*.sh    ** 可以跨多层文件夹
+```
+
+```bash
+opencode-sync manifest                    # 查看生效的规则，以及哪些没在同步
+opencode-sync manifest add scripts/       # 让所有电脑共享它
+opencode-sync manifest exclude agents/x/  # 所有电脑都不再共享它
+opencode-sync manifest local-add notes/   # 只对本机生效
+```
+
+`opencode-sync status` 会显示文件夹里有几项没在同步。
 
 ---
 
@@ -232,7 +256,7 @@ OpenCode 2 改了什么，这个工具怎么应对：
 
 ## 本机专属设置
 
-有些设置只属于某一台电脑：公司代理、本地工具路径、只在某台电脑上有的 MCP 服务器。把它们写进 `~/.config/opencode/opencode-sync.overrides.jsonc`，或者用菜单里的**本机专属设置**：
+有些设置只属于某一台电脑：公司代理、本地工具路径、只在某台电脑上有的 MCP 服务器。把它们写进 `~/.config/opencode-sync/overrides.jsonc`，或者用菜单里的**本机专属设置**：
 
 ```jsonc
 {
@@ -414,7 +438,7 @@ OpenCode 1 上，`auth.json` 作为文件同步。OpenCode 2 把登录存在数�
 
 ## 设置文件
 
-`~/.config/opencode/opencode-sync.jsonc` 只留在本机，永远不会提交。菜单会帮你改，所有键都可以省略。
+`~/.config/opencode-sync/machine.jsonc` 只留在本机，永远不会提交。菜单会帮你改，所有键都可以省略。自动同步的暂停时间和运行记录由工具写在旁边的 `state.json` 里。
 
 ```jsonc
 {
@@ -450,10 +474,11 @@ OpenCode 1 上，`auth.json` 作为文件同步。OpenCode 2 把登录存在数�
 | `guard` | [大改动保护](#安全机制)的上限 |
 | `autoPullOnStartup` / `autoPushOnIdle` | [插件](#opencode-插件)的行为 |
 | `upstreamSkills` | `{ "enabled": false, "updateHours": 24 }`：下载来的 skill 从上游安装，不再走仓库（见下文） |
+| `manifest` | 只对本机生效的额外[清单](#同步清单)规则，比如 `["+notes/"]` |
 
 ### 共享策略文件
 
-`~/.config/opencode/opencode-sync.policy.jsonc` 是唯一**会被提交**的设置文件，让所有电脑读到同一份同步范围。它只能设置 `includeSkills`、`includeState`、`extraPaths`、`categories`、`sessions`、`guard` 和 `upstreamSkills`；其他键（仓库、电脑名、代理、语言、自动同步节奏、凭据）一律忽略，所以策略文件不可能把别的电脑指向另一个仓库。
+仓库根目录（也就是 `~/.config/opencode-sync/repo` 里）的 `opencode-sync.policy.jsonc` 是唯一**会被提交**的设置文件，让所有电脑读到同一份同步范围。它只能设置 `includeSkills`、`includeState`、`extraPaths`、`categories`、`sessions`、`guard` 和 `upstreamSkills`；其他键（仓库、电脑名、代理、语言、自动同步节奏、凭据）一律忽略，所以策略文件不可能把别的电脑指向另一个仓库。
 
 ```jsonc
 { "includeState": false, "sessions": { "enabled": true, "days": 14 } }
@@ -508,6 +533,23 @@ opencode-sync pull --force
 ---
 
 ## 升级
+
+### 升级到 4.0（预览版）
+
+```bash
+npm install -g opencode-github-sync@next
+```
+
+装好后第一次运行任何命令（或者装了插件的 OpenCode 启动时），会自动做一次升级：
+
+- `~/.config/opencode/.git` 和镜像文件夹（`_agents`、`_state` 等）搬到 `~/.config/opencode-sync/repo`。在同一块盘上只是改名，不复制。
+- `opencode-sync.jsonc` 变成 `~/.config/opencode-sync/machine.jsonc`，专属设置文件变成 `~/.config/opencode-sync/overrides.jsonc`。旧文件，以及工具自己写的 `.gitignore` / `.gitattributes`，放进恢复文件夹。
+- 如果仓库里共享过默认清单没列出的根目录文件或文件夹（比如 `scripts/`），会写一份清单继续共享它，升级不会悄悄停掉任何东西的同步。
+- 你的 OpenCode 配置文件不会被动。任何一步失败，都会全部恢复原样，命令停下并说明原因。
+
+逐台升级期间，3.4 和 4.0 的电脑可以共用一个仓库，仓库格式没变。3.4 的电脑会把清单当成普通文件收下，不受影响。
+
+**退回 3.4。** 运行 `npm install -g opencode-github-sync@latest`，然后把 `~/.config/opencode-sync/repo/.git` 搬回 `~/.config/opencode/.git`，再把 `~/.config/opencode-sync/machine.jsonc` 复制成 `~/.config/opencode/opencode-sync.jsonc`（`overrides.jsonc` 复制成 `opencode-sync.overrides.jsonc`）。之后 3.4 的同步会接着进行。
 
 ### 升级到 OpenCode 2
 

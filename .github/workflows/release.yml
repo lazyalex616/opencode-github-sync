@@ -105,9 +105,22 @@ jobs:
       # this should move to trusted publishing (OIDC), which needs no secret at
       # all: configure it at npmjs.com/package/opencode-github-sync/access, then
       # delete both the NPM_TOKEN secret and the env block below.
+      # A version with a pre-release suffix (4.0.0-beta.1) is a preview: it is
+      # published under the `next` dist-tag, so `npm install -g
+      # opencode-github-sync` and every self-update keep getting `latest`, and
+      # the GitHub release is marked as a pre-release that is not "Latest".
+      - name: Release channel
+        id: channel
+        run: |
+          version=$(node -p "require('./package.json').version")
+          case "$version" in
+            *-*) echo "tag=next" >> "$GITHUB_OUTPUT"; echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "tag=latest" >> "$GITHUB_OUTPUT"; echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - name: Publish to npm
         if: steps.published.outputs.exists == 'false'
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --tag "${{ steps.channel.outputs.tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -116,3 +129,5 @@ jobs:
         with:
           body_path: RELEASE_NOTES.md
           generate_release_notes: true
+          prerelease: ${{ steps.channel.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.channel.outputs.prerelease == 'true' && 'false' || 'true' }}
