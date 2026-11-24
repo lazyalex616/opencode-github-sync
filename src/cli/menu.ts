@@ -524,7 +524,8 @@ type CatValue =
   | "plugins"
   | "skills"
   | "credentials"
-  | "sessions";
+  | "sessions"
+  | "state";
 
 async function whatMenu(ctx: Ctx): Promise<Next> {
   for (;;) {
@@ -564,6 +565,7 @@ async function categoriesMenu(ctx: Ctx): Promise<void> {
     { value: "skills", label: t("catSkills") },
     { value: "credentials", label: t("catCredentials") },
     { value: "sessions", label: t("catSessions") },
+    { value: "state", label: t("catState") },
   ];
   const selected = new Set<CatValue>();
   for (const key of ["config", "instructions", "agents", "commands", "plugins"] as const) {
@@ -572,6 +574,7 @@ async function categoriesMenu(ctx: Ctx): Promise<void> {
   if (s.includeSkills) selected.add("skills");
   if (s.includeCredentials) selected.add("credentials");
   if (s.sessions.enabled) selected.add("sessions");
+  if (s.includeState) selected.add("state");
 
   const footer = ctx.ui.io.interactive ? t("checkboxKeys") : t("checkboxLines");
   const result = await ctx.ui.checkbox(t("whatCategories"), choices, selected, footer);
@@ -606,6 +609,7 @@ async function categoriesMenu(ctx: Ctx): Promise<void> {
     n.includeSkills = result.has("skills");
     n.includeCredentials = result.has("credentials");
     n.sessions.enabled = result.has("sessions");
+    n.includeState = result.has("state");
   });
   ok(t("saved"));
 }

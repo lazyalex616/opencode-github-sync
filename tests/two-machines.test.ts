@@ -418,3 +418,22 @@ describe("first link", () => {
     expect(read(path.join(b.roots.config, "opencode.jsonc"))).toContain('"b"');
   });
 });
+
+describe("shared policy (#14)", () => {
+  it("shares the policy file and drops a folder the policy turns off from the index", async () => {
+    const a = machine("alpha");
+    write(path.join(a.roots.config, "AGENTS.md"), "rules\n");
+    write(path.join(a.roots.state, "model.json"), "{}\n");
+    await pushFrom(a);
+    const tree = () =>
+      git(["ls-tree", "-r", "--name-only", "origin/main"], { cwd: a.roots.config }).stdout;
+    expect(tree()).toContain("_state/model.json");
+
+    write(path.join(a.roots.config, "opencode-sync.policy.jsonc"), '{ "includeState": false }\n');
+    a.settings.includeState = false;
+    await pushFrom(a);
+    expect(tree()).toContain("opencode-sync.policy.jsonc");
+    expect(tree()).not.toContain("_state/");
+    expect(fs.existsSync(path.join(a.roots.state, "model.json"))).toBe(true);
+  });
+});

@@ -12,6 +12,7 @@ import { excludePathspecs, readStageOutMarkTime } from "./repo.js";
 import { CollectingReporter } from "./reporter.js";
 import { type Settings, loadSettings, repoBranch } from "./settings.js";
 import { PushRaceError, type SyncOptions, type SyncResult, pull, push } from "./sync.js";
+import { describeReconcile, reconcileUpstream } from "./upstream.js";
 
 /**
  * Unattended sync, run by the operating system's scheduler.
@@ -256,6 +257,8 @@ export interface AutosyncDeps {
   selfUpdate?: () => string;
   /** Shared-login renewal before a push; returns a one-line summary for the log. */
   refreshLease?: (settings: Settings) => Promise<string>;
+  /** Downloaded-skill reconcile before a push; returns a one-line summary, "" for nothing. */
+  reconcileUpstream?: (settings: Settings) => string;
   messages: AutosyncMessages;
 }
 
@@ -364,6 +367,12 @@ export async function runAutosync(deps: AutosyncDeps, trigger = "scheduled"): Pr
       if (lease !== "not due" && lease !== "no OpenAI login here") {
         deps.log(`${trigger}: openai lease ${lease}`);
       }
+    }
+    if (deps.reconcileUpstream && settings.upstreamSkills?.enabled) {
+      // Inside the lock and before the push, so an install or removal noticed
+      // here is published by this very run.
+      const upstream = deps.reconcileUpstream(settings);
+      if (upstream) deps.log(`${trigger}: upstream skills ${upstream}`);
     }
     const result = await deps.push({
       settings,
@@ -575,6 +584,15 @@ export function defaultDeps(
     notify: () => false,
     log: (line) => appendLog(roots, line),
     refreshLease: (settings) => maybeRefreshOpenai({ roots, settings }),
+    reconcileUpstream: (settings) =>
+      describeReconcile(
+        reconcileUpstream({
+          roots,
+          repoRoot: roots.config,
+          settings,
+          alias: hostAlias(settings.machineAlias),
+        }),
+      ),
     messages: ENGLISH_MESSAGES,
     ...overrides,
   };

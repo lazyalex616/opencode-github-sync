@@ -564,6 +564,47 @@ committed. The menu edits it for you; every key is optional.
 | `autosync` | [Autosync](#autosync) interval, quiet period, run while signed out, daily self-update |
 | `guard` | [Large-change guard](#safety) limits |
 | `autoPullOnStartup` / `autoPushOnIdle` | What the [plugin](#opencode-plugin) does |
+| `upstreamSkills` | `{ "enabled": false, "updateHours": 24 }`: install downloaded skills from upstream instead of the repository (below) |
+
+### Shared policy
+
+`~/.config/opencode/opencode-sync.policy.jsonc` is the one settings file that
+**is** committed, so every machine reads the same intended scope. It may set
+`includeSkills`, `includeState`, `extraPaths`, `categories`, `sessions`,
+`guard` and `upstreamSkills`; anything else in it (repository, alias, proxy,
+language, autosync timing, credentials) is ignored, so a policy can never point
+another machine somewhere else.
+
+```jsonc
+{ "includeState": false, "sessions": { "enabled": true, "days": 14 } }
+```
+
+Order: defaults, then the policy, then this machine's own file. A value set on
+the machine always wins. The menu only writes values that differ from the
+policy, so a machine keeps following the policy when it changes later. A
+category the policy turns off is also dropped from the repository index on the
+next push (never deleted from disk).
+
+### Downloaded skills from upstream
+
+Skills installed with the `skills` CLI from a remote source can be left out of
+the repository. With `upstreamSkills.enabled` on every machine (easiest through
+the policy), the repository keeps one small record per skill in `_upstream/`
+instead of the skill's files. Each autosync run, before pushing:
+
+1. a skill installed or removed on this machine since the last run becomes a
+   record;
+2. records from other machines are applied: missing skills are installed (a few
+   per run, failures retried hourly), skills removed elsewhere are moved into
+   the recovery folder, never deleted;
+3. every `updateHours` the upstream skills are updated from their source;
+   pinned installs stay pinned.
+
+Hand-written skills have no remote source and stay repository-synced. A
+downloaded skill you edit yourself can be taken over: set `"sourceType":
+"local"` or add a `"localOwned"` note to its entry in `~/.agents/.skill-lock.json`.
+It is then synced through the repository like your own skills, and a takeover
+recorded on one machine wins over an older upstream record from another.
 
 ---
 

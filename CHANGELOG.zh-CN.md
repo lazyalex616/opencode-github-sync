@@ -2,6 +2,24 @@
 
 [English](./CHANGELOG.md)
 
+## 3.4.0
+
+### 新增
+- **菜单里可以开关状态同步（#12）。** “同步什么 → 类别”里新增状态文件夹（`~/.local/state/opencode`，界面状态和模型列表）的勾选项，不用再手改 `includeState`。
+- **共享同步策略（#14）。** 配置目录里的 `opencode-sync.policy.jsonc` 和设置文件不同，它会被提交，让所有电脑读到同一份同步范围。它只能设置 `includeSkills`、`includeState`、`extraPaths`、`categories`、`sessions`、`guard` 和 `upstreamSkills`；里面的仓库、电脑名、代理、语言、自动同步节奏和凭据一律忽略。生效顺序是默认值、策略、本机设置文件，本机设置过的值永远优先，菜单也只保存和策略不同的值。策略关掉状态或会话时，跟随策略的电脑下次推送会把 `_state/` 或 `_sessions/` 从仓库索引里移除（本地文件不动）。
+- **下载来的 skill 从上游安装（需手动开启）。** 开启 `upstreamSkills.enabled` 后，用 `skills` 命令从远程源装的 skill 不再放进仓库，各电脑在 `_upstream/` 里为每个 skill 共享一份很小的登记。每次自动同步都会安装别的电脑新装的、把别的电脑卸掉的移进恢复文件夹（从不调用 `skills remove`），并每隔 `updateHours` 小时（默认 24）从上游更新。自己写的 skill，以及下载后在本地接管的 skill（`.skill-lock.json` 里设 `"sourceType": "local"` 或加 `localOwned` 说明），照常走仓库同步；合并锁文件时，任何一台电脑上的接管记录都压过上游记录。
+
+### 修复
+- **OpenCode 运行时，状态文件夹不再让同步失败（#13）。** 以前拉取时会通过改名整体替换 `~/.local/state/opencode`，而 OpenCode 开着里面的文件时，Windows 上会报 `EPERM`/`EBUSY`。现在两个方向都逐个文件同步；被锁住或复制途中消失的文件先重试，仍不行就本次跳过并记一笔，不再让整次同步失败。
+- **更多只属于本机的状态留在本机（#13）。** `_state/pty/`（后台服务的终端记录）、`_state/latest/tui/`（打开的标签和高亮）、任意层级的 `locks/` 和所有 `*.lock` 都被忽略，两个方向都不复制；旧版本提交过的，会从索引里移除，不再在电脑之间来回变动。
+- **rebase 冲突但 merge 能解决时，推送不再中断。** 合入远端提交时先试 rebase，冲突了就改用 merge；只有 merge 也冲突时才停下，并列出冲突的文件。rebase 因为别的原因失败时，直接报 git 的原始错误，不再是笼统的提示。
+- **skill 的说明笔记自动合并。** `.gitattributes` 把 `_agents/**/references/**/*.md` 和 `_agents/**/lessons-learned.md` 设成 `merge=union`，两台电脑都往同一份笔记里追加内容时，两边的都保留。配置文件（JSON/JSONC）冲突时仍然停下。
+- **注销后运行的任务也能把失败通知弹到桌面。** 这种任务运行在没有桌面的会话里，以前通知总是悄悄失败。现在会通过一次性计划任务，把通知转到已登录用户的会话里，用 `wscript.exe` 隐藏启动，不会闪窗口。
+
+### 贡献者
+- @cardin：报告 #12
+- @Ivony：报告 #13 和 #14
+
 ## 3.3.1
 
 ### 修复

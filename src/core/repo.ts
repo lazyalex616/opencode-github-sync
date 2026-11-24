@@ -49,6 +49,10 @@ ${STATE_DIR}/opencode-sync-autosync.json.tmp
 /service.json
 ${STATE_DIR}/service.json
 ${STATE_DIR}/locks/
+${STATE_DIR}/**/locks/
+${STATE_DIR}/**/*.lock
+${STATE_DIR}/pty/
+${STATE_DIR}/latest/tui/
 ${STATE_DIR}/prompt-history.jsonl
 ${STATE_DIR}/frecency.jsonl
 
@@ -69,6 +73,11 @@ export const DEFAULT_GITATTRIBUTES = `# Store and check out everything with LF.
 
 # Session shards are gzipped JSON — binary, and never line-merged
 ${SESSIONS_DIR}/*.json.gz binary
+
+# Skill notes grow by appended sections on several machines at once. Keep both
+# sides instead of stopping the sync on a conflict; JSON and JSONC still stop.
+${AGENTS_DIR}/**/references/**/*.md merge=union
+${AGENTS_DIR}/**/lessons-learned.md merge=union
 `;
 
 /**
@@ -80,9 +89,14 @@ export const UNTRACKED_MACHINE_FILES = [
   "service.json",
   `${STATE_DIR}/service.json`,
   `${STATE_DIR}/locks`,
+  `${STATE_DIR}/pty`,
+  `${STATE_DIR}/latest/tui`,
   `${STATE_DIR}/prompt-history.jsonl`,
   `${STATE_DIR}/frecency.jsonl`,
 ];
+
+/** Same, for machine files that need a pattern rather than a fixed path (#13). */
+export const UNTRACKED_MACHINE_GLOBS = [`${STATE_DIR}/**/locks/**`, `${STATE_DIR}/**/*.lock`];
 
 /** Remove machine files from the index if a previous version committed them. */
 export function untrackMachineFiles(root: string): void {
@@ -95,6 +109,7 @@ export function untrackMachineFiles(root: string): void {
       "--ignore-unmatch",
       "--",
       ...UNTRACKED_MACHINE_FILES.map((p) => `:(top,literal)${p}`),
+      ...UNTRACKED_MACHINE_GLOBS.map((p) => `:(top,glob)${p}`),
     ],
     { cwd: root },
   );

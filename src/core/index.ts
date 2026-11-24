@@ -24,3 +24,4 @@ export * from "./recovery.js";
 export * from "./scheduler.js";
 export * from "./update.js";
 export * from "./compare.js";
+export * from "./upstream.js";

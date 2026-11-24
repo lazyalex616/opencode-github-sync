@@ -449,6 +449,27 @@ OpenCode 1 上，`auth.json` 作为文件同步。OpenCode 2 把登录存在数�
 | `autosync` | [自动同步](#自动同步)的间隔、安静时长、注销后运行、每日自动更新 |
 | `guard` | [大改动保护](#安全机制)的上限 |
 | `autoPullOnStartup` / `autoPushOnIdle` | [插件](#opencode-插件)的行为 |
+| `upstreamSkills` | `{ "enabled": false, "updateHours": 24 }`：下载来的 skill 从上游安装，不再走仓库（见下文） |
+
+### 共享策略文件
+
+`~/.config/opencode/opencode-sync.policy.jsonc` 是唯一**会被提交**的设置文件，让所有电脑读到同一份同步范围。它只能设置 `includeSkills`、`includeState`、`extraPaths`、`categories`、`sessions`、`guard` 和 `upstreamSkills`；其他键（仓库、电脑名、代理、语言、自动同步节奏、凭据）一律忽略，所以策略文件不可能把别的电脑指向另一个仓库。
+
+```jsonc
+{ "includeState": false, "sessions": { "enabled": true, "days": 14 } }
+```
+
+生效顺序：默认值，然后策略文件，最后本机自己的设置文件。本机设置过的值永远优先。菜单只把和策略不同的值写进本机文件，所以策略以后改了，本机会继续跟着走。策略关掉的类别，下次推送时会从仓库索引里移除（本地文件不会删）。
+
+### 从上游安装下载来的 skill
+
+用 `skills` 命令从远程源装的 skill，可以不放进仓库。所有电脑都开启 `upstreamSkills.enabled`（最方便的是写进策略文件）后，仓库里每个这类 skill 只留 `_upstream/` 下一份很小的登记，不再存 skill 本身的文件。每次自动同步推送之前：
+
+1. 本机上次以来装上或卸掉的 skill，写成登记；
+2. 应用别的电脑的登记：缺的就装（每次最多几个，失败的一小时后再试），别处卸掉的就移进恢复文件夹，不直接删除；
+3. 每隔 `updateHours` 小时，从上游更新这些 skill；指定了版本的保持不动。
+
+自己写的 skill 没有远程源，照常走仓库同步。下载来但你自己改过的 skill 可以“接管”：在 `~/.agents/.skill-lock.json` 里给它的记录设 `"sourceType": "local"` 或加一个 `"localOwned"` 说明。之后它像自己的 skill 一样走仓库同步，而且一台电脑上的接管记录会压过另一台电脑上较旧的上游记录。
 
 ---
 

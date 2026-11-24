@@ -213,6 +213,15 @@ describe("main menu", () => {
     expect(s.categories.config).toBe(true);
   });
 
+  it("toggles state sync from the categories checkbox (#12)", async () => {
+    linkSettings();
+    // 2 What to sync -> 1 categories -> toggle 9 (state) -> save
+    await drive(["2", "1", "9", "", "b", "q"], "en");
+    expect(loadSettings(roots.config).includeState).toBe(false);
+    await drive(["2", "1", "9", "", "b", "q"], "en");
+    expect(loadSettings(roots.config).includeState).toBe(true);
+  });
+
   it("asks before syncing credentials when visibility cannot be checked", async () => {
     linkSettings();
     await drive(["2", "1", "7", "", "n", "b", "q"], "en");

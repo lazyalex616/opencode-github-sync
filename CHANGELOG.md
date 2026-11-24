@@ -2,6 +2,24 @@
 
 [简体中文](./CHANGELOG.zh-CN.md)
 
+## 3.4.0
+
+### Added
+- **State sync in the menu (#12).** "What to sync → Categories" now has a checkbox for the state folder (`~/.local/state/opencode`: UI state and model lists), so `includeState` no longer needs a hand edit.
+- **Shared sync policy (#14).** `opencode-sync.policy.jsonc` in the config folder is committed, unlike the settings file, so every machine reads the same intended scope. It may set `includeSkills`, `includeState`, `extraPaths`, `categories`, `sessions`, `guard` and `upstreamSkills`; repository, alias, proxy, language, autosync timing and credentials in it are ignored. Effective settings are defaults, then the policy, then this machine's own file, so a value set locally always wins, and the menu only saves values that differ from the policy. When the policy turns state or sessions off, a machine following it removes `_state/` or `_sessions/` from the repository index on its next push (files on disk are untouched).
+- **Downloaded skills from upstream (opt-in).** With `upstreamSkills.enabled`, skills installed with the `skills` CLI from a remote source leave the repository. Machines share one small record per skill in `_upstream/` instead, and each autosync run installs what other machines added, moves what they removed into the recovery folder (never `skills remove`), and updates from upstream every `updateHours` (default 24). Hand-written skills and downloaded skills taken over locally (`"sourceType": "local"` or a `localOwned` note in `.skill-lock.json`) stay repository-synced, and a takeover recorded anywhere wins over an upstream record in the lock-file merge.
+
+### Fixed
+- **The state folder no longer breaks a sync while OpenCode is running (#13).** Pulling replaced `~/.local/state/opencode` as a whole by renaming folders, which fails with `EPERM`/`EBUSY` on Windows while OpenCode holds files open there. State is now mirrored file by file in both directions; a file that is locked or vanishes mid-copy is retried, then skipped for this run and reported, instead of failing the sync.
+- **More machine-local state stays local (#13).** `_state/pty/` (background-service terminal records), `_state/latest/tui/` (open tabs and highlights), `locks/` at any depth and every `*.lock` are ignored, never copied in either direction, and removed from the index if an older version committed them, so they stop churning between machines.
+- **A push no longer stops on a rebase conflict that a merge resolves.** Integrating remote commits tries a rebase first and falls back to a merge when the rebase conflicts; it stops only when the merge conflicts too, naming the conflicted files. A rebase that fails for another reason reports git's own message instead of a generic error.
+- **Skill notes merge on their own.** `.gitattributes` marks `_agents/**/references/**/*.md` and `_agents/**/lessons-learned.md` as `merge=union`, so two machines appending to the same notes keep both additions. Config files (JSON/JSONC) still stop on a conflict.
+- **Failure notifications reach the desktop from a task that runs while signed out.** Such a task runs in a session with no desktop, where the toast always failed silently. The toast is now handed to the signed-in user's session through a one-shot scheduled task started hidden through `wscript.exe`, so no window flashes.
+
+### Contributors
+- @cardin — reported #12
+- @Ivony — reported #13 and #14
+
 ## 3.3.1
 
 ### Fixed

@@ -20,6 +20,7 @@ import { AGENTS_DIR, DATA_DIR, type Roots, STATE_DIR, getRoots } from "./paths.j
 import { saveToRecovery } from "./recovery.js";
 import type { Reporter } from "./reporter.js";
 import type { Settings } from "./settings.js";
+import { isLocalOwned, mergeLockSkills, upstreamNames } from "./upstream.js";
 
 /**
  * Move files between their real locations and the sync repository.
@@ -62,7 +63,20 @@ export const MACHINE_STATE_FILES = new Set([
   "frecency.jsonl",
 ]);
 /** State directories that only hold this machine's lock files. */
-export const MACHINE_STATE_DIRS = new Set(["locks"]);
+export const MACHINE_STATE_DIRS = new Set(["locks", "pty"]);
+
+/**
+ * Whether a path inside the state folder belongs to this machine only:
+ * locks (`locks/` at any depth, any `*.lock`), the background service's
+ * per-terminal records (`pty/`), and the TUI's open tabs and highlights
+ * (`latest/tui/`), which change on every machine all the time (#13).
+ */
+export function isMachineStatePath(relPath: string, isDir: boolean): boolean {
+  const rel = relPath.replace(/\\/g, "/");
+  const name = rel.slice(rel.lastIndexOf("/") + 1);
+  if (isDir) return MACHINE_STATE_DIRS.has(name) || rel === "latest/tui";
+  return MACHINE_STATE_FILES.has(name) || name.endsWith(".lock") || rel.startsWith("latest/tui/");
+}
 
 const SKILL_LOCK = ".skill-lock.json";
 
@@ -88,6 +102,15 @@ function dataFilesFor(settings: Settings): string[] {
   return settings.includeCredentials ? [...DATA_FILES, ...CREDENTIAL_FILES] : DATA_FILES;
 }
 
+function stateCopyOptions(ctx: StageContext) {
+  return {
+    exclude: isMachineStatePath,
+    tolerant: true,
+    onSkip: (target: string, error: Error) =>
+      ctx.reporter.detail(`Skipped ${target} this run (${(error as any).code ?? error.message})`),
+  };
+}
+
 /** Copy everything from the machine into the repository worktree. */
 export function stageIn(ctx: StageContext): void {
   const { repoRoot, roots, settings } = ctx;
@@ -110,49 +133,64 @@ export function stageIn(ctx: StageContext): void {
   }
 
   if (settings.includeState) {
-    if (fs.existsSync(roots.state)) {
-      removeRecursive(repoState);
-      copyDirRecursive(roots.state, repoState, {
-        excludeFiles: MACHINE_STATE_FILES,
-        excludeDirs: MACHINE_STATE_DIRS,
-      });
-    } else {
-      removeRecursive(repoState);
-    }
+    // Mirrored file by file, never as a whole-directory swap: OpenCode keeps
+    // files in this folder open, and a locked or vanishing file is skipped
+    // for this run rather than failing the sync (#13).
+    syncDirIncremental(roots.state, repoState, stateCopyOptions(ctx));
   }
 
   if (settings.includeSkills) {
+    // Downloaded skills are installed by each machine from upstream once
+    // `upstreamSkills` is on; the repository neither carries nor deletes them.
+    const upstream = upstreamNames(roots, repoRoot, settings);
     syncDirIncremental(roots.agents, repoAgents, {
       excludeFiles: new Set([".git"]),
       excludeDirs: new Set([".git"]),
+      exclude: topLevel(upstream),
     });
+    for (const name of upstream) removeRecursive(path.join(repoAgents, name));
     // Nested repositories would be committed as unusable gitlinks. Only the
     // staging copy is cleaned; the real skills directory is never touched.
     removeRecursive(path.join(repoAgents, ".git"));
     removeNestedGitDirs(repoAgents);
-    stageSkillLockIn(ctx, repoAgents);
+    stageSkillLockIn(ctx, repoAgents, upstream);
   }
 
   stageExtraPathsIn(ctx);
   stageConfigIn(ctx);
 }
 
+/** An `exclude` callback matching top-level directories by name. */
+function topLevel(names: Set<string>) {
+  return (rel: string, isDir: boolean): boolean => isDir && !rel.includes("/") && names.has(rel);
+}
+
 /**
  * The skills lock file records which skills are installed and which update
  * prompts were dismissed. Merging instead of overwriting means installing a
- * skill on one machine never un-installs one from another.
+ * skill on one machine never un-installs one from another. A skill taken over
+ * locally (`localOwned`, `sourceType: "local"`) keeps that record whichever
+ * side carries it. With upstream skills on, their records stay out of the
+ * repository: each machine's own lock describes what it installed.
  */
-function stageSkillLockIn(ctx: StageContext, repoAgents: string): void {
+function stageSkillLockIn(ctx: StageContext, repoAgents: string, upstream: Set<string>): void {
   const localLock = path.join(path.dirname(ctx.roots.agents), SKILL_LOCK);
   const repoLock = path.join(repoAgents, SKILL_LOCK);
 
   if (ctx.force || !fs.existsSync(localLock) || !fs.existsSync(repoLock)) {
     mirrorFile(localLock, repoLock);
-    return;
+  } else {
+    const merged = mergeSkillLocks(readJson(repoLock), readJson(localLock));
+    if (merged) writeIfDiffers(repoLock, `${JSON.stringify(merged, null, 2)}\n`);
+    else mirrorFile(localLock, repoLock);
   }
-  const merged = mergeSkillLocks(readJson(repoLock), readJson(localLock));
-  if (merged) writeIfDiffers(repoLock, `${JSON.stringify(merged, null, 2)}\n`);
-  else mirrorFile(localLock, repoLock);
+  if (upstream.size === 0 || !fs.existsSync(repoLock)) return;
+  const lock = readJson(repoLock);
+  if (!lock?.skills) return;
+  for (const name of Object.keys(lock.skills)) {
+    if (upstream.has(name) && !isLocalOwned(lock.skills[name])) delete lock.skills[name];
+  }
+  writeIfDiffers(repoLock, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
 function readJson(file: string): Record<string, any> | undefined {
@@ -171,7 +209,7 @@ function mergeSkillLocks(
   return {
     ...remote,
     ...local,
-    skills: { ...(remote.skills ?? {}), ...(local.skills ?? {}) },
+    skills: mergeLockSkills(local.skills ?? {}, remote.skills ?? {}),
     dismissed: { ...(remote.dismissed ?? {}), ...(local.dismissed ?? {}) },
   };
 }
@@ -303,28 +341,28 @@ export function stageOut(ctx: StageContext): void {
   }
 
   if (settings.includeState && fs.existsSync(repoState)) {
-    // A repository written by an older version may still carry these files.
-    // They are never copied in; this machine's own copies survive.
-    replaceDirAtomically(repoState, roots.state, {
-      excludeFiles: MACHINE_STATE_FILES,
-      excludeDirs: MACHINE_STATE_DIRS,
-      preserveRootFiles: MACHINE_STATE_FILES,
-      preserveRootDirs: MACHINE_STATE_DIRS,
-    });
+    // The live state folder is owned by a running OpenCode. Files are written
+    // one at a time, machine-local paths are never touched, and a locked file
+    // is left for the next run instead of failing this one (#13).
+    syncDirIncremental(repoState, roots.state, stateCopyOptions(ctx));
   }
 
   if (settings.includeSkills && fs.existsSync(repoAgents)) {
-    if (force) {
+    const upstream = upstreamNames(roots, repoRoot, settings);
+    if (force && upstream.size === 0) {
       replaceDirAtomically(repoAgents, roots.agents, {
         excludeFiles: new Set([SKILL_LOCK]),
       });
     } else {
+      // Upstream skills are neither overwritten nor deleted here: the
+      // repository no longer carries them, each machine installs its own.
       syncDirIncremental(repoAgents, roots.agents, {
         excludeFiles: new Set([SKILL_LOCK]),
-        deleteExtraneous: false,
+        exclude: topLevel(upstream),
+        deleteExtraneous: force,
       });
     }
-    stageSkillLockOut(ctx, repoAgents);
+    stageSkillLockOut(ctx, repoAgents, upstream);
   }
 
   stageExtraPathsOut(ctx);
@@ -385,11 +423,22 @@ function sameBytes(a: string, b: string): boolean {
   }
 }
 
-function stageSkillLockOut(ctx: StageContext, repoAgents: string): void {
+function stageSkillLockOut(ctx: StageContext, repoAgents: string, upstream: Set<string>): void {
   const repoLock = path.join(repoAgents, SKILL_LOCK);
   const localLock = path.join(path.dirname(ctx.roots.agents), SKILL_LOCK);
   if (ctx.force || !fs.existsSync(repoLock) || !fs.existsSync(localLock)) {
+    // A forced pull takes the repository's lock, but keeps this machine's
+    // records of the upstream skills it has installed: losing them would read
+    // as an uninstall on the next run and remove the skill everywhere.
+    const kept = Object.fromEntries(
+      Object.entries(readJson(localLock)?.skills ?? {}).filter(([name]) => upstream.has(name)),
+    );
     replaceFileAtomically(repoLock, localLock, { preserveMissing: true });
+    if (Object.keys(kept).length > 0) {
+      const lock = readJson(localLock) ?? {};
+      lock.skills = { ...kept, ...(lock.skills ?? {}) };
+      writeIfDiffers(localLock, `${JSON.stringify(lock, null, 2)}\n`);
+    }
     return;
   }
   const merged = mergeSkillLocks(readJson(localLock), readJson(repoLock));
