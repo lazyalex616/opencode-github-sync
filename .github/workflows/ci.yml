@@ -105,7 +105,7 @@ jobs:
             echo "SYNC_CACHE_ROOT=$base/cache"
             echo "SYNC_HOME=$base/home"
             echo "OGS_REMOTE=$base/remote.git"
-            echo "OGS_LOG=$base/config/logs/opencode-sync-autosync.log"
+            echo "OGS_LOG=$base/opencode-sync/logs/opencode-sync-autosync.log"
           } >> "$GITHUB_ENV"
 
       - name: Run install.sh non-interactively
@@ -157,7 +157,7 @@ jobs:
           done
           echo "the scheduled job did not write to $OGS_LOG"
           cat "$OGS_LOG" 2>/dev/null || true
-          cat "$SYNC_CONFIG_ROOT/logs/autosync-launchd.log" 2>/dev/null || true
+          cat "$(dirname "$OGS_LOG")/autosync-launchd.log" 2>/dev/null || true
           if [ "$RUNNER_OS" = "Windows" ]; then
             # An InteractiveToken task needs a signed-in desktop session, which
             # a hosted runner may not provide. Report what Task Scheduler saw.
