@@ -7,6 +7,38 @@ import { getConfigRoot } from "./paths.js";
 export const SETTINGS_FILE = "opencode-sync.jsonc";
 /** Filename of the per-machine OpenCode config patch (local-only). */
 export const OVERRIDES_FILE = "opencode-sync.overrides.jsonc";
+/**
+ * Filename of the shared sync policy. Unlike the settings file it IS
+ * committed, so every machine reads the same intended scope (#14). It may
+ * only set the keys in `POLICY_KEYS`; machine identity (repository, alias,
+ * proxy, language), autosync timing and credential sync stay per machine.
+ */
+export const POLICY_FILE = "opencode-sync.policy.jsonc";
+
+/** Settings a shared policy may set, as dotted paths. */
+export const POLICY_KEYS = [
+  "includeSkills",
+  "includeState",
+  "extraPaths",
+  "sessions.enabled",
+  "sessions.days",
+  "sessions.maxSessions",
+  "sessions.maxSessionBytes",
+  "sessions.include",
+  "sessions.exclude",
+  "sessions.directories",
+  "categories.config",
+  "categories.instructions",
+  "categories.agents",
+  "categories.commands",
+  "categories.plugins",
+  "guard.maxFiles",
+  "guard.maxBytes",
+  "guard.maxFileBytes",
+  "guard.skipDirs",
+  "upstreamSkills.enabled",
+  "upstreamSkills.updateHours",
+] as const;
 
 export interface RepoSettings {
   /** Full git remote URL. Takes precedence over owner/name. */
@@ -112,6 +144,21 @@ export interface Settings {
   language: string;
   /** Desktop notifications from the scheduled job. */
   notifications: boolean;
+  /** Downloaded skills come from their upstream instead of the repository. */
+  upstreamSkills: UpstreamSkillsSettings;
+}
+
+/**
+ * Skills installed with the `skills` CLI from a remote source. When enabled,
+ * the repository stops carrying them; each machine installs, removes and
+ * updates them from upstream, following a small per-skill registry. Skills
+ * without a remote lock record, or marked `localOwned`, are never touched.
+ * Turn it on for every machine at once, ideally through the shared policy.
+ */
+export interface UpstreamSkillsSettings {
+  enabled: boolean;
+  /** Hours between `skills update` runs from the scheduled job. */
+  updateHours: number;
 }
 
 export const DEFAULT_SKIP_DIRS = ["node_modules", ".venv", "venv", "__pycache__", "dist", ".cache"];
@@ -152,6 +199,7 @@ export const DEFAULT_SETTINGS: Settings = {
   proxy: "",
   language: "",
   notifications: true,
+  upstreamSkills: { enabled: false, updateHours: 24 },
 };
 
 export const MIN_AUTOSYNC_INTERVAL = 2;
@@ -173,6 +221,7 @@ function mergeSettings(base: Settings, patch: Partial<Settings>): Settings {
     categories: { ...base.categories, ...(patch.categories ?? {}) },
     autosync: { ...base.autosync, ...(patch.autosync ?? {}) },
     guard: { ...base.guard, ...(patch.guard ?? {}) },
+    upstreamSkills: { ...base.upstreamSkills, ...(patch.upstreamSkills ?? {}) },
   };
 }
 
@@ -181,16 +230,71 @@ export function defaultSettings(): Settings {
   return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
 }
 
+export function policyPath(configRoot = getConfigRoot()): string {
+  return path.join(configRoot, POLICY_FILE);
+}
+
+function getPath(obj: any, key: string): unknown {
+  return key.split(".").reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), obj);
+}
+
+function setPath(obj: any, key: string, value: unknown): void {
+  const parts = key.split(".");
+  let cur = obj;
+  for (const part of parts.slice(0, -1)) {
+    if (!cur[part] || typeof cur[part] !== "object") cur[part] = {};
+    cur = cur[part];
+  }
+  cur[parts[parts.length - 1] as string] = value;
+}
+
+function deletePath(obj: any, key: string): void {
+  const parts = key.split(".");
+  const parent = parts
+    .slice(0, -1)
+    .reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), obj);
+  if (parent && typeof parent === "object") delete parent[parts[parts.length - 1] as string];
+}
+
+/**
+ * The shared policy, reduced to the keys a policy may set. Anything else in
+ * the file (a repository URL, a proxy) is ignored, so a policy can never
+ * point another machine at a different repository. A missing or unreadable
+ * file is no policy.
+ */
+export function loadPolicy(configRoot = getConfigRoot()): Partial<Settings> {
+  const file = policyPath(configRoot);
+  if (!fs.existsSync(file)) return {};
+  let parsed: unknown;
+  try {
+    parsed = parseJsonc(fs.readFileSync(file, "utf8"));
+  } catch {
+    return {};
+  }
+  const policy: Record<string, unknown> = {};
+  for (const key of POLICY_KEYS) {
+    const value = getPath(parsed, key);
+    if (value !== undefined) setPath(policy, key, value);
+  }
+  return policy as Partial<Settings>;
+}
+
+/**
+ * Effective settings: defaults, then the shared policy, then this machine's
+ * own file. A value set locally always wins, so a machine can opt out of any
+ * part of the policy.
+ */
 export function loadSettings(configRoot = getConfigRoot()): Settings {
+  const withPolicy = mergeSettings(defaultSettings(), loadPolicy(configRoot));
   const file = settingsPath(configRoot);
-  if (!fs.existsSync(file)) return defaultSettings();
+  if (!fs.existsSync(file)) return withPolicy;
   let parsed: Partial<Settings>;
   try {
     parsed = parseJsonc<Partial<Settings>>(fs.readFileSync(file, "utf8"));
   } catch (e) {
     throw new Error(`Cannot read ${SETTINGS_FILE}: ${(e as Error).message}`);
   }
-  return mergeSettings(defaultSettings(), parsed ?? {});
+  return mergeSettings(withPolicy, parsed ?? {});
 }
 
 /** Load, change and save in one step. Returns the saved settings. */
@@ -204,9 +308,22 @@ export function updateSettings(
   return settings;
 }
 
+/**
+ * Save this machine's settings. A value equal to the shared policy is not
+ * written, so the machine keeps following the policy when it changes later;
+ * only a deliberate local difference is stored (#14).
+ */
 export function saveSettings(settings: Settings, configRoot = getConfigRoot()): void {
   fs.mkdirSync(configRoot, { recursive: true });
-  fs.writeFileSync(settingsPath(configRoot), `${JSON.stringify(settings, null, 2)}\n`);
+  const policy = loadPolicy(configRoot);
+  const out: Settings = JSON.parse(JSON.stringify(settings));
+  for (const key of POLICY_KEYS) {
+    const shared = getPath(policy, key);
+    if (shared !== undefined && JSON.stringify(shared) === JSON.stringify(getPath(out, key))) {
+      deletePath(out, key);
+    }
+  }
+  fs.writeFileSync(settingsPath(configRoot), `${JSON.stringify(out, null, 2)}\n`);
 }
 
 export function repoUrl(settings: Settings): string | undefined {

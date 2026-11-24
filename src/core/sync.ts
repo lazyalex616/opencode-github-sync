@@ -22,7 +22,7 @@ import {
 import { type GuardReport, LargeChangeError, evaluateGuard, writeLocalExcludes } from "./guard.js";
 import { commitMessage, hostAlias } from "./host.js";
 import { applyOverrides, configMatchesRepo, findConfigFile } from "./overrides.js";
-import { type Roots, getDatabasePath, getRoots } from "./paths.js";
+import { type Roots, SESSIONS_DIR, STATE_DIR, getDatabasePath, getRoots } from "./paths.js";
 import { recoveryRoot, saveToRecovery } from "./recovery.js";
 import {
   LOCAL_RUNTIME_PATHS,
@@ -49,7 +49,14 @@ import {
   totalChanges,
 } from "./reporter.js";
 import { exportSessions, importSessions } from "./sessions.js";
-import { DEFAULT_SETTINGS, type Settings, loadSettings, repoBranch, repoUrl } from "./settings.js";
+import {
+  DEFAULT_SETTINGS,
+  type Settings,
+  loadPolicy,
+  loadSettings,
+  repoBranch,
+  repoUrl,
+} from "./settings.js";
 import { sqliteAvailable } from "./sqlite.js";
 import {
   createStageContext,
@@ -220,6 +227,7 @@ async function runPush(ctx: Context): Promise<SyncResult> {
   git(["add", "-A"], { cwd: root });
   unstageLocalRuntimePaths(root);
   untrackMachineFiles(root);
+  untrackPolicyDisabled(ctx);
   unstageDisabled(ctx);
 
   const staged = git(["diff", "--cached", "--name-status"], { cwd: root });
@@ -356,6 +364,67 @@ async function finishPush(ctx: Context, integrated: boolean): Promise<void> {
   writeStageOutMark(ctx.root);
 }
 
+/**
+ * Bring `origin/<branch>` into HEAD.
+ *
+ * A rebase comes first, for a linear history. When it stops on a conflict the
+ * push falls back to a plain merge: a rebase replays every local commit and
+ * drops merge commits, so a conflict already resolved by hand in a local
+ * merge would be hit again on every run and the machine would never recover.
+ * A merge applies both sides once and keeps that resolution. Only a conflict
+ * the merge cannot settle either is reported, by file name. A rebase that
+ * failed for another reason (network, a dirty tree) reports git's own words.
+ */
+export function integrateRemote(
+  root: string,
+  branch: string,
+  reporter: Reporter = silentReporter,
+): void {
+  const rebase = git(["pull", "--rebase", "origin", branch], { cwd: root });
+  if (rebase.ok) return;
+  if (!rebaseInProgress(root)) {
+    git(["rebase", "--abort"], { cwd: root });
+    throw toGitError("Pull before push", rebase);
+  }
+  const rebasePaths = conflictedPaths(root);
+  git(["rebase", "--abort"], { cwd: root });
+  const merge = git(["merge", "--no-edit", `origin/${branch}`], { cwd: root });
+  if (merge.ok) {
+    reporter.step(
+      `Rebase stopped on ${rebasePaths.join(", ") || "a conflict"}; merged instead and resolved it`,
+    );
+    return;
+  }
+  const mergePaths = conflictedPaths(root);
+  git(["merge", "--abort"], { cwd: root });
+  const paths = mergePaths.length > 0 ? mergePaths : rebasePaths;
+  throw new SyncError(
+    `The remote has changes that conflict with this machine${paths.length ? `: ${paths.join(", ")}` : ""}.\n` +
+      "Run `opencode-sync pull` to take the remote version, or `opencode-sync push --force` to overwrite it.",
+  );
+}
+
+function rebaseInProgress(root: string): boolean {
+  const dir = git(["rev-parse", "--git-dir"], { cwd: root });
+  if (!dir.ok) return false;
+  const gitDir = path.resolve(root, dir.stdout);
+  return (
+    fs.existsSync(path.join(gitDir, "rebase-merge")) ||
+    fs.existsSync(path.join(gitDir, "rebase-apply"))
+  );
+}
+
+/** Paths a stopped rebase or merge is stuck on. Read before aborting. */
+function conflictedPaths(root: string): string[] {
+  const result = git(["diff", "--name-only", "--diff-filter=U"], { cwd: root });
+  return result.ok
+    ? result.stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+    : [];
+}
+
 /** Push the branch. Returns true when a rebase integrated remote commits. */
 function pushBranch(ctx: Context): boolean {
   const { root, branch, force, reporter } = ctx;
@@ -400,14 +469,7 @@ function pushBranch(ctx: Context): boolean {
   try {
     for (let attempt = 1; ; attempt++) {
       const before = headCommit(root);
-      const rebase = git(["pull", "--rebase", "origin", branch], { cwd: root });
-      if (!rebase.ok) {
-        git(["rebase", "--abort"], { cwd: root });
-        throw new SyncError(
-          "The remote has changes that conflict with this machine.\n" +
-            "Run `opencode-sync pull` to take the remote version, or `opencode-sync push --force` to overwrite it.",
-        );
-      }
+      integrateRemote(root, branch, reporter);
       // The rebase moves HEAD only when it replayed local commits onto new
       // remote ones; an unchanged HEAD means nothing arrived.
       if (headCommit(root) !== before) integrated = true;
@@ -453,6 +515,28 @@ function isRejected(result: GitResult): boolean {
 }
 
 // ── Disabled categories ─────────────────────────────────────────────────────
+
+/**
+ * Drop the state and session mirrors from the index when the shared policy
+ * turns them off and this machine follows it (#14). Only a policy-backed
+ * "off" counts: when every machine agrees the folder is not shared, removing
+ * it stops stale copies from churning; one machine opting out on its own
+ * would just ping-pong with a machine that keeps adding it back. A machine
+ * that deliberately overrides the policy keeps publishing. Files on disk are
+ * never touched.
+ */
+function untrackPolicyDisabled(ctx: Context): void {
+  const policy = loadPolicy(ctx.root);
+  const specs: string[] = [];
+  if (policy.includeState === false && !ctx.settings.includeState) {
+    specs.push(`:(top,literal)${STATE_DIR}`);
+  }
+  if (policy.sessions?.enabled === false && !ctx.settings.sessions.enabled) {
+    specs.push(`:(top,literal)${SESSIONS_DIR}`);
+  }
+  if (specs.length === 0) return;
+  git(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...specs], { cwd: ctx.root });
+}
 
 function unstageDisabled(ctx: Context): void {
   if (ctx.disabled.length === 0) return;

@@ -82,29 +82,94 @@ export function mirrorFile(src: string, dst: string): number {
 export interface CopyOptions {
   excludeFiles?: Set<string>;
   excludeDirs?: Set<string>;
+  /**
+   * Skip an entry by its path relative to the copy root (forward slashes).
+   * Used for paths that a bare name cannot pin down, such as `latest/tui`.
+   */
+  exclude?: (relPath: string, isDir: boolean) => boolean;
+  /**
+   * The tree is live and owned by another process (OpenCode's state folder).
+   * A file that is locked, or vanishes while being read, is retried briefly and
+   * then skipped instead of failing the whole sync. `onSkip` hears about each.
+   */
+  tolerant?: boolean;
+  onSkip?: (target: string, error: Error) => void;
 }
 
-export function copyDirRecursive(src: string, dst: string, options: CopyOptions = {}): number {
-  const { excludeFiles = new Set<string>(), excludeDirs = new Set<string>() } = options;
+const TRANSIENT_CODES = new Set(["EPERM", "EBUSY", "EACCES", "ENOENT", "ENOTEMPTY"]);
+const TRANSIENT_RETRIES = 3;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Run one filesystem step. In tolerant mode a transient error (a file another
+ * process holds open, or deletes underneath us) is retried with a short
+ * backoff and then skipped; any other error, or any error outside tolerant
+ * mode, is thrown. Returns false when the step was skipped.
+ */
+function attempt(options: CopyOptions, target: string, step: () => void): boolean {
+  if (!options.tolerant) {
+    step();
+    return true;
+  }
+  for (let i = 0; ; i++) {
+    try {
+      step();
+      return true;
+    } catch (err: any) {
+      if (err instanceof SymlinkRefusedError || !TRANSIENT_CODES.has(err?.code)) throw err;
+      if (err.code === "ENOENT" || i >= TRANSIENT_RETRIES - 1) {
+        options.onSkip?.(target, err);
+        return false;
+      }
+      sleepSync(50 * 2 ** i);
+    }
+  }
+}
+
+function relOf(rel: string, name: string): string {
+  return rel ? `${rel}/${name}` : name;
+}
+
+function excluded(options: CopyOptions, rel: string, name: string, isDir: boolean): boolean {
+  if (isDir ? options.excludeDirs?.has(name) : options.excludeFiles?.has(name)) return true;
+  return options.exclude?.(rel, isDir) ?? false;
+}
+
+export function copyDirRecursive(
+  src: string,
+  dst: string,
+  options: CopyOptions = {},
+  rel = "",
+): number {
   if (!fs.existsSync(src)) return 0;
   rejectLink(src, "source");
   rejectLink(dst, "target");
   ensureDir(dst);
 
   let count = 0;
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+  let entries: fs.Dirent[] = [];
+  if (
+    !attempt(options, src, () => {
+      entries = fs.readdirSync(src, { withFileTypes: true });
+    })
+  )
+    return 0;
+  for (const entry of entries) {
     const srcPath = path.join(src, entry.name);
     if (entry.isSymbolicLink()) throw new SymlinkRefusedError("source", srcPath);
     const dstPath = path.join(dst, entry.name);
+    const childRel = relOf(rel, entry.name);
     if (entry.isDirectory()) {
-      if (excludeDirs.has(entry.name)) continue;
+      if (excluded(options, childRel, entry.name, true)) continue;
       rejectLink(dstPath, "target");
-      count += copyDirRecursive(srcPath, dstPath, options);
+      count += copyDirRecursive(srcPath, dstPath, options, childRel);
     } else {
-      if (excludeFiles.has(entry.name)) continue;
+      if (excluded(options, childRel, entry.name, false)) continue;
       rejectLink(dstPath, "target");
-      fs.copyFileSync(srcPath, dstPath);
-      count++;
+      if (attempt(options, srcPath, () => fs.copyFileSync(srcPath, dstPath))) count++;
     }
   }
   return count;
@@ -139,6 +204,9 @@ export function syncDirIncremental(
     excludeDirs = new Set<string>(),
     deleteExtraneous = true,
   } = options;
+  const skip = (rel: string, name: string, isDir: boolean): boolean =>
+    (isDir ? excludeDirs.has(name) : excludeFiles.has(name)) ||
+    (options.exclude?.(rel.split(path.sep).join("/"), isDir) ?? false);
 
   rejectLink(srcDir, "source");
   rejectLink(dstDir, "target");
@@ -167,18 +235,25 @@ export function syncDirIncremental(
       const srcPath = path.join(srcAbs, entry.name);
       if (entry.isSymbolicLink()) throw new SymlinkRefusedError("source", srcPath);
       if (entry.isDirectory()) {
-        if (excludeDirs.has(entry.name)) continue;
         const childRel = rel ? path.join(rel, entry.name) : entry.name;
+        if (skip(childRel, entry.name, true)) continue;
         const dstChild = path.join(dstDir, childRel);
         rejectLink(dstChild, "target");
         ensureDir(dstChild);
         walkSource(childRel);
         continue;
       }
-      if (excludeFiles.has(entry.name)) continue;
+      if (skip(rel ? path.join(rel, entry.name) : entry.name, entry.name, false)) continue;
       const dstFile = path.join(dstAbs, entry.name);
       rejectLink(dstFile, "target");
-      const srcStat = fs.statSync(srcPath);
+      let srcStat: fs.Stats | undefined;
+      if (
+        !attempt(options, srcPath, () => {
+          srcStat = fs.statSync(srcPath);
+        }) ||
+        !srcStat
+      )
+        continue;
       const srcSeconds = Math.floor(srcStat.mtimeMs / 1000);
       let needCopy = true;
       try {
@@ -190,7 +265,7 @@ export function syncDirIncremental(
         // Missing destination — copy.
       }
       if (needCopy) {
-        fs.copyFileSync(srcPath, dstFile);
+        if (!attempt(options, dstFile, () => fs.copyFileSync(srcPath, dstFile))) continue;
         try {
           const stamp = new Date(srcSeconds * 1000);
           fs.utimesSync(dstFile, stamp, stamp);
@@ -217,19 +292,20 @@ export function syncDirIncremental(
       const dstChild = path.join(dstDir, childRel);
       if (entry.isSymbolicLink()) throw new SymlinkRefusedError("target", dstChild);
       if (entry.isDirectory()) {
-        if (excludeDirs.has(entry.name)) continue;
+        if (skip(childRel, entry.name, true)) continue;
         if (!fs.existsSync(srcChild)) {
-          fs.rmSync(dstChild, { recursive: true, force: true });
-          deleted++;
+          if (
+            attempt(options, dstChild, () => fs.rmSync(dstChild, { recursive: true, force: true }))
+          )
+            deleted++;
         } else {
           walkDestination(childRel);
         }
         continue;
       }
-      if (excludeFiles.has(entry.name)) continue;
+      if (skip(childRel, entry.name, false)) continue;
       if (!fs.existsSync(srcChild)) {
-        fs.unlinkSync(dstChild);
-        deleted++;
+        if (attempt(options, dstChild, () => fs.unlinkSync(dstChild))) deleted++;
       }
     }
   };
