@@ -5,7 +5,7 @@ import { bridgeCredentials, hasCredentialTable } from "./credentials.js";
 import { childEnv } from "./env.js";
 import { git } from "./git.js";
 import { hostAlias } from "./host.js";
-import { DATA_DIR, type Roots, getDatabasePath } from "./paths.js";
+import { DATA_DIR, type Roots, getDatabasePath, repoDir } from "./paths.js";
 import { type Settings, repoBranch } from "./settings.js";
 import { sqliteAvailable } from "./sqlite.js";
 
@@ -231,14 +231,15 @@ export async function maybeRefreshOpenai(deps: LeaseDeps): Promise<string> {
     const auth = readAuth(roots);
     const live = openaiExpiry(auth);
     if (live === undefined) return "no OpenAI login here";
-    if (!isDue(now, live, publishedExpiry(roots.config, repoBranch(settings)))) return "not due";
+    const repo = repoDir(roots);
+    if (!isDue(now, live, publishedExpiry(repo, repoBranch(settings)))) return "not due";
 
     const machine = hostAlias(settings.machineAlias);
-    const lease = readLease(roots.config);
+    const lease = readLease(repo);
     if (lease && lease.machine !== machine && now - lease.at < LEASE_TTL_MS) {
       return `held by ${lease.machine ?? "another machine"}`;
     }
-    if (!claim(roots.config, lease, machine, now)) return "lost the claim to another machine";
+    if (!claim(repo, lease, machine, now)) return "lost the claim to another machine";
 
     let token: TokenResponse;
     try {

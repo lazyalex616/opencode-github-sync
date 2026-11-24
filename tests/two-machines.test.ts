@@ -8,10 +8,10 @@ import { compareWithRemote } from "../src/core/compare.js";
 import { git } from "../src/core/git.js";
 import { LargeChangeError } from "../src/core/guard.js";
 import { fileHistory, listDevices, restoreFile } from "../src/core/history.js";
-import type { Roots } from "../src/core/paths.js";
+import { type Roots, repoDir, toolRoot } from "../src/core/paths.js";
 import { listRecovery } from "../src/core/recovery.js";
 import { CollectingReporter } from "../src/core/reporter.js";
-import { type Settings, defaultSettings, saveSettings } from "../src/core/settings.js";
+import { type Settings, defaultSettings, runtimePath, saveSettings } from "../src/core/settings.js";
 import { pull, push } from "../src/core/sync.js";
 
 /**
@@ -98,6 +98,11 @@ function autosync(m: Machine) {
   return runAutosync(deps, "test");
 }
 
+/** The machine's git working copy (4.0: in the tool's home). */
+const repo = (m: Machine): string => repoDir(m.roots);
+/** Forget the autosync bookkeeping, so the next run is due at once. */
+const resetRunState = (m: Machine): void => fs.rmSync(runtimePath(m.roots.config), { force: true });
+
 describe("autosync between two machines", () => {
   it("propagates an edit from A to B through scheduled runs", async () => {
     const a = machine("alpha");
@@ -119,10 +124,10 @@ describe("autosync between two machines", () => {
     // with an identical backdated mtime would look unchanged to git's stat cache.
     write(path.join(a.roots.config, "opencode.jsonc"), '{ "model": "second" }\n');
     settle(a, 5 * 60_000);
-    fs.rmSync(path.join(a.roots.state, "opencode-sync-autosync.json"), { force: true });
+    resetRunState(a);
     expect((await autosync(a)).action).toBe("push");
     settle(b);
-    fs.rmSync(path.join(b.roots.state, "opencode-sync-autosync.json"), { force: true });
+    resetRunState(b);
     expect((await autosync(b)).ok).toBe(true);
     expect(read(path.join(b.roots.config, "opencode.jsonc"))).toContain("second");
   });
@@ -152,15 +157,15 @@ describe("autosync between two machines", () => {
     outcome = await autosync(b);
     expect(outcome.action).toBe("receive");
     expect(read(path.join(b.roots.config, "AGENTS.md"))).toBe("from alpha\n");
-    expect(git(["log", "-1", "--format=%s"], { cwd: b.roots.config }).stdout).toContain("alpha");
+    expect(git(["log", "-1", "--format=%s"], { cwd: repo(b) }).stdout).toContain("alpha");
   });
 
   it("skips while another process holds the lock", async () => {
     const a = machine("alpha");
     write(path.join(a.roots.config, "opencode.jsonc"), "{}\n");
     settle(a);
-    const lockDir = path.join(a.roots.config, ".opencode-sync.lock");
-    fs.mkdirSync(lockDir);
+    const lockDir = path.join(toolRoot(a.roots), ".lock");
+    fs.mkdirSync(lockDir, { recursive: true });
     fs.writeFileSync(
       path.join(lockDir, "owner.json"),
       JSON.stringify({ id: "x", pid: process.pid, startedAt: new Date().toISOString() }),
@@ -191,16 +196,17 @@ describe("push race", () => {
     await pullTo(b);
 
     write(path.join(a.roots.config, "a.md"), "a\n");
+    write(path.join(repo(a), "a.md"), "a\n");
     write(path.join(b.roots.config, "b.md"), "b\n");
 
     // Install a pre-push hook on B that lets A publish first, once.
-    const hook = path.join(b.roots.config, ".git", "hooks", "pre-push");
+    const hook = path.join(repo(b), ".git", "hooks", "pre-push");
     const marker = path.join(sandbox, "raced");
     const script = [
       "#!/bin/sh",
       `if [ ! -f '${marker.replace(/\\/g, "/")}' ]; then`,
       `  touch '${marker.replace(/\\/g, "/")}'`,
-      `  cd '${a.roots.config.replace(/\\/g, "/")}' && git add -A && git commit -qm 'race: from alpha' && git push -q origin main`,
+      `  cd '${repo(a).replace(/\\/g, "/")}' && git add -A && git commit -qm 'race: from alpha' && git push -q origin main`,
       "fi",
       "exit 0",
       "",
@@ -209,7 +215,7 @@ describe("push race", () => {
 
     const result = await pushFrom(b);
     expect(result.changed).toBe(true);
-    const log = git(["log", "--format=%s", "origin/main"], { cwd: b.roots.config }).stdout;
+    const log = git(["log", "--format=%s", "origin/main"], { cwd: repo(b) }).stdout;
     expect(log).toContain("race: from alpha");
     expect(log.split("\n")[0]).toContain("beta");
     expect(read(path.join(b.roots.config, "a.md"))).toBe("a\n");
@@ -251,10 +257,10 @@ describe("large-change guard", () => {
     const a = machine("alpha", (s) => {
       s.guard.maxFileBytes = 1024;
     });
-    write(path.join(a.roots.config, "big.bin"), "x".repeat(4096));
+    write(path.join(a.roots.config, "command", "big.bin"), "x".repeat(4096));
     const dry = await pushFrom(a, { dryRun: true });
     expect(dry.guard?.reasons).toContain("file");
-    expect(dry.guard?.oversized[0]?.path).toBe("big.bin");
+    expect(dry.guard?.oversized[0]?.path).toBe("command/big.bin");
   });
 
   it("never stages generated directories inside synced trees", async () => {
@@ -264,7 +270,7 @@ describe("large-change guard", () => {
     write(path.join(a.roots.config, "tools", "dist", "bundle.js"), "x\n");
     write(path.join(a.roots.config, "tools", "main.py"), "x\n");
     await pushFrom(a);
-    const files = git(["ls-files"], { cwd: a.roots.config }).stdout;
+    const files = git(["ls-files"], { cwd: repo(a) }).stdout;
     expect(files).toContain("tools/main.py");
     expect(files).not.toContain(".venv");
     expect(files).not.toContain("dist/bundle.js");
@@ -289,7 +295,7 @@ describe("category toggles", () => {
     write(path.join(b.roots.config, "AGENTS.md"), "local edit\n");
     write(path.join(b.roots.config, "command", "x.md"), "x\n");
     await pushFrom(b);
-    const shared = git(["show", "origin/main:AGENTS.md"], { cwd: b.roots.config }).stdout;
+    const shared = git(["show", "origin/main:AGENTS.md"], { cwd: repo(b) }).stdout;
     expect(shared).toBe("shared");
     expect(read(path.join(b.roots.config, "AGENTS.md"))).toBe("local edit\n");
 
@@ -308,7 +314,7 @@ describe("history", () => {
     write(file, "version 2\n");
     await pushFrom(a);
 
-    const history = fileHistory(a.roots.config, "AGENTS.md");
+    const history = fileHistory(repo(a), "AGENTS.md");
     expect(history).toHaveLength(2);
     const result = restoreFile(a.roots, "AGENTS.md", history[1]!.commit);
     expect(read(file)).toBe("version 1\n");
@@ -325,17 +331,17 @@ describe("history", () => {
     write(path.join(b.roots.config, "x.md"), "x\n");
     await pushFrom(b);
     // A commit from an older release has no trailer, only the subject.
-    write(path.join(b.roots.config, "y.md"), "y\n");
-    git(["add", "-A"], { cwd: b.roots.config });
-    git(["commit", "-qm", "sync: 2026-01-01 00:00:00 from gamma-old"], { cwd: b.roots.config });
+    write(path.join(repo(b), "y.md"), "y\n");
+    git(["add", "-A"], { cwd: repo(b) });
+    git(["commit", "-qm", "sync: 2026-01-01 00:00:00 from gamma-old"], { cwd: repo(b) });
 
-    const devices = listDevices(b.roots.config).map((d) => d.alias);
+    const devices = listDevices(repo(b)).map((d) => d.alias);
     expect(devices).toEqual(["gamma-old", "beta", "alpha"]);
   });
 });
 
 describe("forced pull recovery", () => {
-  it("saves new folders, non-ASCII names and local-only skills before replacing them", async () => {
+  it("saves listed files, non-ASCII names and local-only skills before replacing them", async () => {
     const a = machine("alpha");
     write(path.join(a.roots.config, "opencode.jsonc"), "{}\n");
     write(path.join(a.roots.agents, "shared", "SKILL.md"), "shared\n");
@@ -346,16 +352,20 @@ describe("forced pull recovery", () => {
     write(path.join(a.roots.config, "AGENTS.md"), "from alpha\n");
     await pushFrom(a);
 
-    write(path.join(b.roots.config, "notes", "draft.md"), "draft\n");
+    write(path.join(b.roots.config, "command", "draft.md"), "draft\n");
     write(path.join(b.roots.config, "技能.md"), "中文\n");
+    // Not in the manifest: a forced pull never touches it (4.0, deny by default).
+    write(path.join(b.roots.config, "notes", "scratch.txt"), "mine\n");
     write(path.join(b.roots.agents, "mine", "SKILL.md"), "mine\n");
     await pullTo(b, { force: true });
 
-    expect(fs.existsSync(path.join(b.roots.config, "notes"))).toBe(false);
+    expect(fs.existsSync(path.join(b.roots.config, "command", "draft.md"))).toBe(false);
+    expect(fs.existsSync(path.join(b.roots.config, "技能.md"))).toBe(false);
+    expect(read(path.join(b.roots.config, "notes", "scratch.txt"))).toBe("mine\n");
     expect(fs.existsSync(path.join(b.roots.agents, "mine"))).toBe(false);
     const saved = listRecovery(b.roots).map((dir) => dir);
     const find = (rel: string) => saved.find((dir) => fs.existsSync(path.join(dir, rel)));
-    expect(read(path.join(find(path.join("notes", "draft.md"))!, "notes", "draft.md"))).toBe(
+    expect(read(path.join(find(path.join("command", "draft.md"))!, "command", "draft.md"))).toBe(
       "draft\n",
     );
     expect(read(path.join(find("技能.md")!, "技能.md"))).toBe("中文\n");
@@ -413,7 +423,7 @@ describe("first link", () => {
     const b = machine("beta");
     write(path.join(b.roots.config, "opencode.jsonc"), '{ "model": "b" }\n');
     await pushFrom(b, { adopt: "local" });
-    const shared = git(["show", "origin/main:opencode.jsonc"], { cwd: b.roots.config }).stdout;
+    const shared = git(["show", "origin/main:opencode.jsonc"], { cwd: repo(b) }).stdout;
     expect(shared).toContain('"b"');
     expect(read(path.join(b.roots.config, "opencode.jsonc"))).toContain('"b"');
   });
@@ -426,10 +436,11 @@ describe("shared policy (#14)", () => {
     write(path.join(a.roots.state, "model.json"), "{}\n");
     await pushFrom(a);
     const tree = () =>
-      git(["ls-tree", "-r", "--name-only", "origin/main"], { cwd: a.roots.config }).stdout;
+      git(["ls-tree", "-r", "--name-only", "origin/main"], { cwd: repo(a) }).stdout;
     expect(tree()).toContain("_state/model.json");
 
-    write(path.join(a.roots.config, "opencode-sync.policy.jsonc"), '{ "includeState": false }\n');
+    // The policy lives at the root of the shared working copy.
+    write(path.join(repo(a), "opencode-sync.policy.jsonc"), '{ "includeState": false }\n');
     a.settings.includeState = false;
     await pushFrom(a);
     expect(tree()).toContain("opencode-sync.policy.jsonc");

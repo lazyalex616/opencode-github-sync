@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { withSyncLock } from "../core/lock.js";
+import { ensureMigrated } from "../core/migrate.js";
 import { getRoots } from "../core/paths.js";
 import { CollectingReporter } from "../core/reporter.js";
 import { idlePushEnabled, loadSettings, repoUrl, settingsPath } from "../core/settings.js";
@@ -87,6 +88,12 @@ function notice(level: "info" | "warn", message: string, extra?: unknown): void 
 
 function isConfigured(): boolean {
   const roots = getRoots();
+  try {
+    ensureMigrated(roots);
+  } catch (error) {
+    notice("warn", (error as Error).message);
+    return false;
+  }
   if (!fs.existsSync(settingsPath(roots.config))) return false;
   try {
     return Boolean(repoUrl(loadSettings(roots.config)));

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { appendLog, readState, tailLog, writeState } from "../core/autosync.js";
 import { redactValue, writeBundle } from "../core/bundle.js";
@@ -11,8 +12,9 @@ import { fileHistory, listDevices, restoreFile, trackedFiles } from "../core/his
 import { hostAlias, sanitizeAlias } from "../core/host.js";
 import { parseJsonc } from "../core/jsonc.js";
 import { withSyncLock } from "../core/lock.js";
+import { effectiveRules, isIncluded } from "../core/manifest.js";
 import { findConfigFile, loadOverrides } from "../core/overrides.js";
-import { type Roots, getRoots } from "../core/paths.js";
+import { type Roots, getRoots, repoDir } from "../core/paths.js";
 import { listRecovery } from "../core/recovery.js";
 import { CollectingReporter } from "../core/reporter.js";
 import {
@@ -341,12 +343,20 @@ function defaultDiscover(): string[] {
 async function resolveFirstSync(ctx: Ctx, prefer?: "repo" | "local"): Promise<boolean> {
   const s = settings(ctx);
   const remote = repoUrl(s)!;
-  if (fs.existsSync(path.join(ctx.roots.config, ".git"))) {
+  const repo = repoDir(ctx.roots);
+  if (fs.existsSync(path.join(repo, ".git"))) {
     // Already a working copy (re-link): an ordinary sync handles it.
     await runSync(ctx, "both");
     return true;
   }
-  const comparison = compareWithRemote(ctx.roots.config, remote, repoBranch(s), s.guard.skipDirs);
+  const rules = effectiveRules(repo, s);
+  const comparison = compareWithRemote(
+    ctx.roots.config,
+    remote,
+    repoBranch(s),
+    s.guard.skipDirs,
+    (rel) => isIncluded(rules, rel, s.guard.skipDirs),
+  );
   if (comparison.empty) {
     info(t("resolveEmpty"));
     await runSync(ctx, "push");
@@ -829,7 +839,8 @@ async function updateMenu(ctx: Ctx): Promise<Next> {
     }
     if (choice === "upgrade") {
       info(t("updRunning"));
-      ctx.updater.install();
+      const target = ctx.updater.check();
+      ctx.updater.install(target.spec);
       ok(t("updDone"));
       return "exit";
     }
@@ -908,7 +919,7 @@ function showOverrides(ctx: Ctx, file: string): void {
   const configFile = findConfigFile(ctx.roots.config);
   if (configFile) {
     const rel = path.relative(ctx.roots.config, configFile).split(path.sep).join("/");
-    const head = git(["show", `HEAD:${rel}`], { cwd: ctx.roots.config });
+    const head = git(["show", `HEAD:${rel}`], { cwd: repoDir(ctx.roots) });
     if (head.ok) shared = safe(() => parseJsonc(head.stdout), undefined);
   }
   for (const [key, value] of flatten(overrides)) {
@@ -941,7 +952,7 @@ export function collectDiagnostics(ctx: Pick<Ctx, "roots" | "scheduler">): [stri
   const remote = s ? repoUrl(s) : undefined;
   if (remote) {
     const probe = git(["ls-remote", "--heads", remote], {
-      cwd: ctx.roots.config,
+      cwd: os.tmpdir(),
       timeoutMs: 60_000,
     });
     rows.push([
@@ -958,10 +969,7 @@ export function collectDiagnostics(ctx: Pick<Ctx, "roots" | "scheduler">): [stri
       ? `${t("diagRegistered", { kind: sched.kind })}${sched.nextRun ? ` · ${sched.nextRun}` : ""}`
       : t("diagNotRegistered"),
   ]);
-  if (fs.existsSync(path.join(ctx.roots.config, ".git"))) {
-    const ignored = git(["check-ignore", "-q", "opencode-sync.jsonc"], { cwd: ctx.roots.config });
-    rows.push([t("diagSettings"), ignored.ok ? t("diagIgnored") : t("diagNotIgnored")]);
-  }
+  rows.push([t("diagSettings"), settingsPath(ctx.roots.config)]);
   return rows;
 }
 
@@ -1002,9 +1010,9 @@ export function exportBundle(ctx: Pick<Ctx, "roots" | "scheduler" | "cwd">): str
     },
     { name: "autosync.log", content: tailLog(ctx.roots, 400).join("\n") },
   ];
-  const gitLog = git(["log", "-20", "--format=%h %cI %s"], { cwd: ctx.roots.config });
+  const gitLog = git(["log", "-20", "--format=%h %cI %s"], { cwd: repoDir(ctx.roots) });
   if (gitLog.ok) entries.push({ name: "git-log.txt", content: gitLog.stdout });
-  const status = git(["status", "--short"], { cwd: ctx.roots.config });
+  const status = git(["status", "--short"], { cwd: repoDir(ctx.roots) });
   if (status.ok) entries.push({ name: "git-status.txt", content: status.stdout });
   return writeBundle(ctx.cwd, entries);
 }
@@ -1074,7 +1082,7 @@ async function proxyMenu(ctx: Ctx): Promise<Next> {
 async function restoreMenu(ctx: Ctx): Promise<Next> {
   const filter = await ctx.ui.text(t("rsAsk"));
   if (filter === undefined) return "stay";
-  const files = trackedFiles(ctx.roots.config, filter).slice(0, 30);
+  const files = trackedFiles(repoDir(ctx.roots), filter).slice(0, 30);
   if (files.length === 0) {
     warn(t("rsNoMatch"));
     return "stay";
@@ -1084,7 +1092,7 @@ async function restoreMenu(ctx: Ctx): Promise<Next> {
     files.map((f, i) => ({ value: f, label: f, key: String(i + 1) })),
   );
   if (!file) return "stay";
-  const versions = fileHistory(ctx.roots.config, file, 20);
+  const versions = fileHistory(repoDir(ctx.roots), file, 20);
   if (versions.length === 0) {
     warn(t("rsNoHistory"));
     return "stay";
@@ -1119,7 +1127,7 @@ async function restoreMenu(ctx: Ctx): Promise<Next> {
 async function devicesMenu(ctx: Ctx): Promise<Next> {
   const s = settings(ctx);
   const me = hostAlias(s.machineAlias);
-  const devices = listDevices(ctx.roots.config);
+  const devices = listDevices(repoDir(ctx.roots));
   heading(t("devTitle"));
   if (devices.length === 0) detail(t("devNone"));
   for (const d of devices) {

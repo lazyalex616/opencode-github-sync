@@ -11,20 +11,16 @@ import { OVERRIDES_FILE, overridesPath } from "./settings.js";
  * toolchain path, an MCP server that only exists on one box. Overrides restore
  * that freedom by splitting the config into two layers.
  *
- *   repo `opencode.jsonc`            shared baseline, committed
- *   local `opencode-sync.overrides.jsonc`  this machine only, never committed
- *   ───────────────────────────────  deep merge
- *   effective `opencode.jsonc`       what OpenCode actually reads
+ *   working copy `opencode.jsonc`          shared baseline, committed
+ *   `~/.config/opencode-sync/overrides.jsonc`  this machine only
+ *   ───────────────────────────────────────  deep merge
+ *   live `~/.config/opencode/opencode.jsonc`   what OpenCode actually reads
  *
- * The interesting half is push. Because the effective file is what lives on
- * disk, a naive push would upload this machine's overrides to everyone. So on
- * push any key that the overrides file claims is restored to the value the
- * repository already had (or removed entirely if the repository never had it).
- * Overridden keys therefore become invisible to sync in both directions.
- *
- * When no overrides file exists the config is copied byte for byte, which keeps
- * comments and formatting untouched. The structural rewrite only happens for
- * users who actually opted into overrides.
+ * Copying the live file into the working copy restores every override-owned
+ * key to the value the repository already had (or removes it when the
+ * repository never had it), so overridden keys are invisible to sync in both
+ * directions. Without overrides the config is copied byte for byte, which keeps
+ * comments and formatting untouched.
  */
 
 const CONFIG_FILENAMES = ["opencode.jsonc", "opencode.json"] as const;
@@ -38,13 +34,6 @@ export function findConfigFile(dir: string): string | undefined {
   return undefined;
 }
 
-export function hasOverrides(configRoot: string): boolean {
-  const file = overridesPath(configRoot);
-  if (!fs.existsSync(file)) return false;
-  const parsed = loadOverrides(configRoot);
-  return Object.keys(parsed).length > 0;
-}
-
 export function loadOverrides(configRoot: string): Record<string, any> {
   const file = overridesPath(configRoot);
   if (!fs.existsSync(file)) return {};
@@ -54,26 +43,6 @@ export function loadOverrides(configRoot: string): Record<string, any> {
   } catch (e) {
     throw new Error(`Cannot read ${OVERRIDES_FILE}: ${(e as Error).message}`);
   }
-}
-
-/**
- * Merge the local overrides into the config file after a pull.
- *
- * Returns true when the file was rewritten.
- */
-export function applyOverrides(configRoot: string): boolean {
-  const overrides = loadOverrides(configRoot);
-  if (Object.keys(overrides).length === 0) return false;
-
-  const configFile = findConfigFile(configRoot);
-  if (!configFile) return false;
-
-  const base = parseJsonc<Record<string, any>>(fs.readFileSync(configFile, "utf8"));
-  const merged = deepMerge(base, overrides);
-  const next = `${JSON.stringify(merged, null, 2)}\n`;
-  if (fs.readFileSync(configFile, "utf8") === next) return false;
-  fs.writeFileSync(configFile, next);
-  return true;
 }
 
 /**
@@ -127,57 +96,37 @@ function canonical(value: unknown): string {
 }
 
 /**
- * True when the config on disk is, apart from override-owned keys, exactly what
- * the repository already holds.
- *
- * Once overrides are in use the file on disk permanently differs from the
- * committed version — that is the whole point. Plain `git status` therefore
- * reports it as modified forever, which looks like pending work that never goes
- * away. This lets the status command tell a real edit apart from the expected
- * override difference.
- *
- * Returns `false` when there are no overrides, so callers fall back to git.
+ * The committed form of an effective config text: override-owned keys put
+ * back to the repository's values (`previousText`), or removed when the
+ * repository never had them. `undefined` when there are no overrides, which
+ * means the text is committed byte for byte.
  */
-export function configMatchesRepo(configRoot: string, previousText: string | undefined): boolean {
-  const overrides = loadOverrides(configRoot);
-  if (Object.keys(overrides).length === 0) return false;
-  if (!previousText) return false;
-
-  const configFile = findConfigFile(configRoot);
-  if (!configFile) return false;
-
-  try {
-    const effective = parseJsonc<Record<string, any>>(fs.readFileSync(configFile, "utf8"));
-    const previous = parseJsonc<Record<string, any>>(previousText);
-    return canonical(stripOverrides(effective, overrides, previous)) === canonical(previous);
-  } catch {
-    // Unparseable on either side: treat it as a genuine difference.
-    return false;
-  }
-}
-
-/**
- * Produce the text that should be committed for the config file.
- *
- * `previousText` is the version currently recorded in the repository. It has to
- * be read out of git rather than off disk, because the worktree *is* the config
- * directory — the file on disk is the effective config, overrides and all, so
- * using it as the baseline would quietly publish this machine's overrides.
- *
- * Returns `undefined` when the file can be committed as-is.
- */
-export function configTextForRepo(
-  configRoot: string,
+export function repoTextFromEffective(
+  effectiveText: string,
+  overrides: Record<string, any>,
   previousText: string | undefined,
 ): string | undefined {
-  const overrides = loadOverrides(configRoot);
   if (Object.keys(overrides).length === 0) return undefined;
-
-  const configFile = findConfigFile(configRoot);
-  if (!configFile) return undefined;
-
-  const effective = parseJsonc<Record<string, any>>(fs.readFileSync(configFile, "utf8"));
+  const effective = parseJsonc<Record<string, any>>(effectiveText);
   const previous = previousText ? parseJsonc<Record<string, any>>(previousText) : undefined;
-
   return `${JSON.stringify(stripOverrides(effective, overrides, previous), null, 2)}\n`;
+}
+
+/** The effective form of a committed config text: overrides merged in. */
+export function effectiveTextFromRepo(
+  repoText: string,
+  overrides: Record<string, any>,
+): string | undefined {
+  if (Object.keys(overrides).length === 0) return undefined;
+  const base = parseJsonc<Record<string, any>>(repoText);
+  return `${JSON.stringify(deepMerge(base ?? {}, overrides), null, 2)}\n`;
+}
+
+/** True when two config texts hold the same data, ignoring layout and key order. */
+export function sameConfigData(a: string, b: string): boolean {
+  try {
+    return canonical(parseJsonc(a)) === canonical(parseJsonc(b));
+  } catch {
+    return false;
+  }
 }

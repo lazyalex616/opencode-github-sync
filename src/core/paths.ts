@@ -9,7 +9,11 @@ import path from "node:path";
  * machine.
  */
 export interface Roots {
-  /** `~/.config/opencode` — also the git worktree for the sync repo. */
+  /**
+   * `~/.config/opencode` — OpenCode's live configuration. Since 4.0 it is no
+   * longer a git worktree: listed files are copied to and from the working
+   * copy in the tool's own home (see `toolRootFor`).
+   */
   config: string;
   /** `~/.local/share/opencode` — auth, account, sqlite database. */
   data: string;
@@ -60,6 +64,36 @@ export function getRoots(): Roots {
     agents: getAgentsRoot(),
     cache: getCacheRoot(),
   };
+}
+
+/** Name of the tool's home, a sibling of the OpenCode config directory. */
+export const TOOL_DIR_NAME = "opencode-sync";
+/** The git working copy inside the tool's home. */
+export const REPO_DIR_NAME = "repo";
+
+/**
+ * The tool's own home: `~/.config/opencode-sync`, next to the OpenCode config
+ * directory. It holds this machine's settings, overrides, runtime state, logs,
+ * the sync lock and the git working copy. It is always derived from the config
+ * root, so anything that points the config root at a sandbox (tests, CI) gets
+ * a sandboxed tool home with it. `SYNC_TOOL_ROOT` overrides it outright.
+ */
+export function toolRootFor(configRoot: string): string {
+  if (process.env.SYNC_TOOL_ROOT) return process.env.SYNC_TOOL_ROOT;
+  return path.join(path.dirname(configRoot), TOOL_DIR_NAME);
+}
+
+export function toolRoot(roots: Roots): string {
+  return toolRootFor(roots.config);
+}
+
+/** The git working copy the tool syncs through. Never the live config. */
+export function repoDirFor(configRoot: string): string {
+  return path.join(toolRootFor(configRoot), REPO_DIR_NAME);
+}
+
+export function repoDir(roots: Roots): string {
+  return repoDirFor(roots.config);
 }
 
 /** Path of the OpenCode SQLite database that holds all sessions. */

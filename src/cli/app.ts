@@ -11,7 +11,7 @@ import {
 import { setChildProxy } from "../core/env.js";
 import { git } from "../core/git.js";
 import { notify } from "../core/notify.js";
-import type { Roots } from "../core/paths.js";
+import { type Roots, repoDir, toolRoot } from "../core/paths.js";
 import {
   type InstallContext,
   type InstallResult,
@@ -106,7 +106,7 @@ export function scheduleSpec(roots: Roots, settings: Settings): ScheduleSpec {
     cli: path.join(CLI_DIR, "index.js"),
     intervalMinutes: settings.autosync.intervalMinutes,
     env,
-    logDir: path.join(roots.config, "logs"),
+    logDir: path.join(toolRoot(roots), "logs"),
   };
 }
 
@@ -153,13 +153,14 @@ export const realScheduler: SchedulerApi = {
 
 export interface UpdateApi {
   check: () => ReturnType<typeof checkForUpdate>;
-  install: () => void;
+  /** Install what the check found; `latest` when no spec is given. */
+  install: (spec?: string) => void;
   uninstall: () => void;
 }
 
 export const realUpdater: UpdateApi = {
   check: () => checkForUpdate(path.resolve(CLI_DIR, "..", "core")),
-  install: () => installLatest(),
+  install: (spec) => installLatest(spec),
   uninstall: () => uninstallGlobal(),
 };
 
@@ -185,7 +186,7 @@ export function autosyncDeps(roots: Roots, updater: UpdateApi = realUpdater): Au
       const check = updater.check();
       if (check.error) return `check failed: ${check.error}`;
       if (!check.newer) return `up to date (${check.current})`;
-      updater.install();
+      updater.install(check.spec);
       return `upgraded ${check.current} -> ${check.latest}`;
     },
   });
@@ -195,8 +196,9 @@ export function autosyncDeps(roots: Roots, updater: UpdateApi = realUpdater): Au
 
 /** ISO date of the newest commit in the sync repository, if any. */
 export function lastCommitTime(roots: Roots): number | undefined {
-  if (!fs.existsSync(path.join(roots.config, ".git"))) return undefined;
-  const log = git(["log", "-1", "--format=%cI"], { cwd: roots.config });
+  const repo = repoDir(roots);
+  if (!fs.existsSync(path.join(repo, ".git"))) return undefined;
+  const log = git(["log", "-1", "--format=%cI"], { cwd: repo });
   const time = log.ok ? Date.parse(log.stdout) : Number.NaN;
   return Number.isFinite(time) ? time : undefined;
 }

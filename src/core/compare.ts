@@ -99,6 +99,7 @@ export function compareWithRemote(
   remote: string,
   branch: string,
   skipDirs: string[] = [],
+  include?: (rel: string) => boolean,
 ): CompareResult {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "ogs-compare-"));
   try {
@@ -121,6 +122,11 @@ export function compareWithRemote(
     });
     const theirs = remoteFiles(tree.ok ? tree.stdout : "");
     const ours = localFiles(root, skipDirs);
+    if (include) {
+      // Since 4.0 only files the manifest lists take part, on either side.
+      for (const rel of [...ours.keys()]) if (!include(rel)) ours.delete(rel);
+      for (const rel of [...theirs.keys()]) if (!include(rel)) theirs.delete(rel);
+    }
     const differences: FileDifference[] = [];
     for (const [rel, id] of ours) {
       const other = theirs.get(rel);

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { git } from "./git.js";
-import type { Roots } from "./paths.js";
+import { type Roots, repoDir } from "./paths.js";
 import { saveToRecovery } from "./recovery.js";
 import { DEVICE_TRAILER } from "./sync.js";
 
@@ -95,8 +95,8 @@ export function restoreFile(
   rel: string,
   commit: string,
 ): { recovery?: string; target: string } {
-  const root = roots.config;
-  const target = path.join(root, rel);
+  const root = repoDir(roots);
+  const target = path.join(roots.config, rel);
   const show = git(["cat-file", "-e", `${commit}:${rel}`], { cwd: root });
   if (!show.ok) throw new Error(`${rel} does not exist in ${commit.slice(0, 8)}`);
   const recovery = saveToRecovery(roots, "restore", [{ source: target, rel }]);

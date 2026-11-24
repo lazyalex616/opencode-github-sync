@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { toolRootFor } from "./paths.js";
 
 /**
  * Cross-process advisory lock.
@@ -29,7 +30,7 @@ export interface AcquireOptions {
 }
 
 function lockDir(configRoot: string): string {
-  return path.join(configRoot, ".opencode-sync.lock");
+  return path.join(toolRootFor(configRoot), ".lock");
 }
 
 function readOwner(dir: string): { id?: string; pid?: number } {

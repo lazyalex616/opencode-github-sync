@@ -2,6 +2,28 @@
 
 [简体中文](./CHANGELOG.zh-CN.md)
 
+## 4.0.0-beta.1
+
+Preview release, published under the npm tag `next`. `npm install -g opencode-github-sync` still installs 3.4; try this one with `npm install -g opencode-github-sync@next`. Implements the full proposal of #14.
+
+### Changed
+- **`~/.config/opencode` is no longer a git repository.** The working copy moves to `~/.config/opencode-sync/repo`, a folder the tool owns. Before each sync the listed config files are copied in; after git has brought in other machines' work, the result is copied back. A live file is only replaced if nobody edited it since it was read; a local edit made in between is kept and shared on the next push.
+- **Deny by default.** Only files a manifest lists are synced from `~/.config/opencode`. The shared list is `opencode-sync.manifest` at the root of the repository (`+path`, `-path`, `*`, `**`, a trailing `/` for a folder, last match wins); without it a built-in default lists what OpenCode itself reads. A helper script, or a file a new OpenCode release writes there, stays local until it is added. Each machine can add its own lines (`manifest` in its settings), and a category switched off becomes `-` rules for that machine.
+- **The tool's own files leave the config folder.** Settings are `~/.config/opencode-sync/machine.jsonc`, overrides `overrides.jsonc`, runtime bookkeeping (autosync state and the pause) `state.json`, plus `logs/` and the sync lock. The shared policy (`opencode-sync.policy.jsonc`) stays at the root of the repository.
+
+### Added
+- `opencode-sync manifest [list | add | exclude | local-add | local-exclude] <path>`.
+- `opencode-sync status` shows how many entries of the config folder are not synced; `manifest` lists them.
+- Preview channel: a version with a pre-release suffix is published under `next` and marked as a GitHub pre-release. A stable install never updates to a preview; a preview install follows the newer of `next` and `latest`.
+
+### Upgrading
+- Automatic on the first run: `.git` and the mirror folders are renamed into `~/.config/opencode-sync/repo`, the settings and overrides are copied into the tool's home, and the old 3.x files go to the recovery folder. If the repository shared a root file or folder the default manifest does not list, a manifest that keeps sharing it is written. OpenCode's own files are not touched, and any failure undoes the move.
+- 3.4 and 4.0 machines can share one repository while you upgrade; the repository format is unchanged.
+- Going back: see **Upgrading to 4.0 (preview)** in the README.
+
+### Contributors
+- @Ivony — proposed the restructure in #14
+
 ## 3.4.0
 
 ### Added

@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { copyDirRecursive } from "../src/core/fsx.js";
 import { notifyLauncherScript, notifyRegisterScript } from "../src/core/notify.js";
 import type { Roots } from "../src/core/paths.js";
+import { repoDirFor } from "../src/core/paths.js";
 import { DEFAULT_GITATTRIBUTES } from "../src/core/repo.js";
-import { defaultSettings, loadSettings, saveSettings } from "../src/core/settings.js";
+import { defaultSettings, loadSettings, saveSettings, settingsPath } from "../src/core/settings.js";
 import { isMachineStatePath } from "../src/core/stage.js";
 import { integrateRemote } from "../src/core/sync.js";
 import {
@@ -141,7 +142,7 @@ describe("shared policy (#14)", () => {
   it("applies the policy, lets the machine override it, and ignores machine identity", () => {
     const root = path.join(sandbox, "config");
     write(
-      path.join(root, "opencode-sync.policy.jsonc"),
+      path.join(repoDirFor(root), "opencode-sync.policy.jsonc"),
       `{ // shared
         "includeState": false,
         "sessions": { "enabled": true },
@@ -157,7 +158,7 @@ describe("shared policy (#14)", () => {
 
     s.sessions.enabled = false;
     saveSettings(s, root);
-    const saved = JSON.parse(fs.readFileSync(path.join(root, "opencode-sync.jsonc"), "utf8"));
+    const saved = JSON.parse(fs.readFileSync(settingsPath(root), "utf8"));
     expect(saved.includeState).toBeUndefined();
     expect(saved.sessions.enabled).toBe(false);
     s = loadSettings(root);

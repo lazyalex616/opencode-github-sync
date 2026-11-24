@@ -2,6 +2,28 @@
 
 [English](./CHANGELOG.md)
 
+## 4.0.0-beta.1
+
+预览版，发布在 npm 的 `next` 标签下。`npm install -g opencode-github-sync` 装的仍是 3.4；想试这一版用 `npm install -g opencode-github-sync@next`。完整实现 #14 的提案。
+
+### 变更
+- **`~/.config/opencode` 不再是 git 仓库。** 工作副本搬到 `~/.config/opencode-sync/repo`，这个文件夹归工具自己管。每次同步前把清单里的配置文件复制进去，git 合入别的电脑的改动后再把结果复制回来。只有读取之后没人改过的文件才会被替换；中途在本机改过的文件会保留，下次推送时共享出去。
+- **默认不同步。** `~/.config/opencode` 里只有清单列出的文件才同步。共享清单是仓库根目录的 `opencode-sync.manifest`（`+路径`、`-路径`、`*`、`**`，结尾 `/` 表示文件夹，最后匹配的规则说了算）；没有这个文件时用内置默认清单，也就是 OpenCode 自己会读的内容。随手放进去的脚本、OpenCode 新版本写进去的新文件，在加进清单前都只留在本机。每台电脑可以加自己的规则（设置里的 `manifest`），关掉的类别会变成这台电脑的 `-` 规则。
+- **工具自己的文件搬出配置目录。** 设置是 `~/.config/opencode-sync/machine.jsonc`，专属设置是 `overrides.jsonc`，运行记录（自动同步状态和暂停时间）是 `state.json`，另有 `logs/` 和同步锁。共享策略文件 `opencode-sync.policy.jsonc` 仍在仓库根目录。
+
+### 新增
+- `opencode-sync manifest [list | add | exclude | local-add | local-exclude] <路径>`。
+- `opencode-sync status` 显示配置目录里有几项没在同步；`manifest` 会列出它们。
+- 预览通道：带预发布后缀的版本发到 `next` 标签，GitHub 上标为 pre-release。稳定版永远不会自动更新到预览版；预览版会跟着 `next` 和 `latest` 中较新的那个走。
+
+### 升级
+- 第一次运行时自动完成：`.git` 和镜像文件夹改名搬进 `~/.config/opencode-sync/repo`，设置和专属设置复制到工具目录，3.x 的旧文件放进恢复文件夹。如果仓库共享过默认清单没列出的根目录文件或文件夹，会写一份清单继续共享。OpenCode 自己的文件不会被动，任何一步失败都会全部恢复原样。
+- 逐台升级期间，3.4 和 4.0 的电脑可以共用一个仓库，仓库格式没变。
+- 退回方法见 README 的**升级到 4.0（预览版）**。
+
+### 贡献者
+- @Ivony：在 #14 提出这次重构
+
 ## 3.4.0
 
 ### 新增

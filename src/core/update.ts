@@ -61,25 +61,47 @@ export function latestVersion(): string {
   return npm(["view", PACKAGE_NAME, "version"], 60_000);
 }
 
+/**
+ * The newest version this install should move to. A stable install follows
+ * `latest` only, so a preview never reaches it. A preview install (version
+ * with a `-` suffix) follows whichever of `next` and `latest` is newer, so a
+ * tester gets the next preview and then the stable release.
+ */
+export function channelVersion(current: string): { version: string; spec: string } {
+  const latest = latestVersion();
+  if (!current.includes("-")) return { version: latest, spec: `${PACKAGE_NAME}@latest` };
+  let next = "";
+  try {
+    next = npm(["view", `${PACKAGE_NAME}@next`, "version"], 60_000);
+  } catch {
+    next = "";
+  }
+  return next && compareVersions(next, latest) > 0
+    ? { version: next, spec: `${PACKAGE_NAME}@${next}` }
+    : { version: latest, spec: `${PACKAGE_NAME}@latest` };
+}
+
 export interface UpdateCheck {
   current: string;
   latest?: string;
   newer: boolean;
   error?: string;
+  /** What `installLatest` installs for this check. */
+  spec?: string;
 }
 
 export function checkForUpdate(moduleDir: string): UpdateCheck {
   const current = currentVersion(moduleDir);
   try {
-    const latest = latestVersion();
-    return { current, latest, newer: compareVersions(latest, current) > 0 };
+    const { version, spec } = channelVersion(current);
+    return { current, latest: version, newer: compareVersions(version, current) > 0, spec };
   } catch (error) {
     return { current, newer: false, error: (error as Error).message.split("\n")[0] };
   }
 }
 
-export function installLatest(): void {
-  npm(["install", "-g", `${PACKAGE_NAME}@latest`], 300_000);
+export function installLatest(spec = `${PACKAGE_NAME}@latest`): void {
+  npm(["install", "-g", spec], 300_000);
 }
 
 export function uninstallGlobal(): void {

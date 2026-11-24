@@ -11,7 +11,14 @@ import {
 } from "../core/autosync.js";
 import { LargeChangeError } from "../core/guard.js";
 import { withSyncLock } from "../core/lock.js";
-import { getDatabasePath, getRoots } from "../core/paths.js";
+import {
+  MANIFEST_FILE,
+  effectiveRules,
+  listUnlisted,
+  sharedManifestLines,
+} from "../core/manifest.js";
+import { ensureMigrated } from "../core/migrate.js";
+import { getDatabasePath, getRoots, repoDir, toolRoot } from "../core/paths.js";
 import { repairSessions } from "../core/repair.js";
 import { listSessions } from "../core/sessions.js";
 import {
@@ -196,6 +203,9 @@ function runStatus(): void {
       ? paint(t("stClean"), style.green)
       : paint(t("stFiles", { n: state.dirty }), style.yellow),
   );
+  if (state.unlisted.length > 0) {
+    keyValue(t("stUnlisted"), paint(t("stFiles", { n: state.unlisted.length }), style.muted));
+  }
   keyValue(
     t("stOverrides"),
     state.overridesActive ? paint(t("stActive"), style.accent) : paint(t("none"), style.muted),
@@ -212,7 +222,83 @@ function runStatus(): void {
     detail(state.lastCommit);
     if (state.lastCommitDate) detail(state.lastCommitDate);
   }
+  if (state.unlisted.length > 0) {
+    write();
+    detail(t("stUnlistedHint", { list: state.unlisted.slice(0, 8).join(", ") }));
+  }
   write();
+}
+
+/**
+ * `opencode-sync manifest`: what the sync shares from the config folder.
+ *
+ *   list (default)      the rules in force and the unlisted root entries
+ *   add <path>          share a path with every machine (shared manifest)
+ *   exclude <path>      stop sharing a path for every machine
+ *   local-add <path>    share a path from this machine only
+ *   local-exclude <p>   keep a path local on this machine only
+ *
+ * A folder is written with a trailing `/`. Shared changes go into the
+ * working copy's `opencode-sync.manifest` and are published by the next push.
+ */
+export function runManifest(args: Args): void {
+  const roots = getRoots();
+  const repo = repoDir(roots);
+  const settings = loadSettings(roots.config);
+  const [sub = "list", target] = args.positional;
+  const asRule = (sign: "+" | "-", p: string): string => {
+    const clean = p.replace(/\\/g, "/").replace(/^\.?\/+/, "");
+    const isDir =
+      !clean.endsWith("/") && fs.existsSync(path.join(roots.config, clean))
+        ? fs.statSync(path.join(roots.config, clean)).isDirectory()
+        : clean.endsWith("/");
+    return `${sign}${clean.replace(/\/+$/, "")}${isDir ? "/" : ""}`;
+  };
+
+  if (sub === "list") {
+    banner(t("mfTitle"));
+    const file = path.join(repo, MANIFEST_FILE);
+    const shared = fs.existsSync(file);
+    heading(shared ? t("mfShared") : t("mfDefault"));
+    for (const line of sharedManifestLines(repo)) {
+      if (line.trim() && !line.trim().startsWith("#")) detail(line.trim());
+    }
+    if ((settings.manifest ?? []).length > 0) {
+      heading(t("mfLocal"));
+      for (const line of settings.manifest) detail(line);
+    }
+    heading(t("mfUnlisted"));
+    const unlisted = listUnlisted(
+      roots.config,
+      effectiveRules(repo, settings),
+      settings.guard?.skipDirs ?? [],
+    );
+    if (unlisted.length === 0) detail(t("mfNone"));
+    for (const entry of unlisted) detail(entry);
+    write();
+    return;
+  }
+
+  if (!target || !["add", "exclude", "local-add", "local-exclude"].includes(sub)) {
+    fail(t("mfUsage"));
+    process.exitCode = 1;
+    return;
+  }
+  const rule = asRule(sub.endsWith("add") ? "+" : "-", target);
+  if (sub.startsWith("local-")) {
+    settings.manifest = [...(settings.manifest ?? []).filter((l) => l !== rule), rule];
+    saveSettings(settings, roots.config);
+  } else {
+    const file = path.join(repo, MANIFEST_FILE);
+    const lines = sharedManifestLines(repo).filter((l) => l.trim() !== rule);
+    while (lines.length > 0 && lines[lines.length - 1]?.trim() === "") lines.pop();
+    if (!fs.existsSync(file)) {
+      lines.unshift("# Files of ~/.config/opencode this repository shares (opencode-github-sync).");
+    }
+    fs.mkdirSync(repo, { recursive: true });
+    fs.writeFileSync(file, `${[...lines, rule].join("\n")}\n`);
+  }
+  ok(t("mfAdded", { rule }));
 }
 
 function runInit(args: Args, mode: "init" | "link"): void {
@@ -564,6 +650,7 @@ function runHelp(): void {
 
   heading(t("helpLocal"));
   command("overrides", t("helpOverrides"));
+  command("manifest [list|add|exclude|local-add|local-exclude] <path>", t("helpManifest"));
   command("config", t("helpConfig"));
 
   heading(t("helpFlags"));
@@ -592,6 +679,19 @@ function command(name: string, description: string): void {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const roots = getRoots();
+  try {
+    const migrated = ensureMigrated(roots);
+    if (migrated?.movedRepository) {
+      info(`Upgraded this machine to the 4.0 layout (${toolRoot(roots)}).`);
+      if (migrated.manifestWritten.length > 0) {
+        info(`Kept syncing what 3.x shared: ${migrated.manifestWritten.join(", ")}`);
+      }
+    }
+  } catch (error) {
+    fail((error as Error).message);
+    process.exitCode = 1;
+    return;
+  }
   applyLocalSettings(safeLoadSettings(roots), args.values.get("lang"));
 
   switch (args.command) {
@@ -637,6 +737,9 @@ async function main(): Promise<void> {
       return;
     case "overrides":
       runOverrides();
+      return;
+    case "manifest":
+      runManifest(args);
       return;
     case "config":
       runConfig();
